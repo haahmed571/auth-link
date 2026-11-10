@@ -59,7 +59,11 @@
   .sms { background:var(--navy); color:#fff; }
   .hint { font-size:12px; color:var(--muted); margin-top:6px; }
   .err { color:#b42318; font-size:14px; margin-top:10px; display:none; }
-  #preview { white-space:pre-wrap; font-family:ui-monospace,Menlo,monospace; font-size:13px; background:#f7f8fa; border-radius:8px; padding:10px; margin-top:8px; }
+  .chat { background:#efeae2; border-radius:10px; padding:12px; margin-top:8px; }
+  #preview { background:#d9fdd3; border-radius:10px 0 10px 10px; padding:8px 10px; font-size:14.5px; line-height:1.4; color:#111b21; box-shadow:0 1px .5px rgba(11,20,26,.13); margin-left:auto; max-width:94%; word-wrap:break-word; }
+  #preview pre { font-family:ui-monospace,Menlo,monospace; font-size:13px; margin:2px 0; white-space:pre; overflow-x:auto; }
+  #preview code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:rgba(0,0,0,.06); padding:0 4px; border-radius:4px; }
+  #preview .q { display:block; border-left:3px solid #6b7686; padding-left:8px; color:#3b4a54; }
 </style>
 </head>
 <body>
@@ -116,8 +120,8 @@
   </div>
 
   <div class="card">
-    <b style="font-size:14px">Message preview</b>
-    <div id="preview"></div>
+    <b style="font-size:14px">WhatsApp preview</b>
+    <div class="chat"><div id="preview"></div></div>
   </div>
 
   <div class="err" id="err"></div>
@@ -194,28 +198,88 @@
   $("addPart").onclick = addPart;
 
   // ---- message ----
-  function message() {
+  // Builds the message. fmt "wa" = WhatsApp formatting (*bold*, _italic_, ```mono```), "sms" = plain text.
+  const KEYCAP = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"];
+  const LINE = "━━━━━━━━━━━━━━━━";
+  function message(fmt = "wa") {
+    const wa = fmt === "wa";
+    const B = t => wa ? `*${t}*` : t;          // bold
+    const I = t => wa ? `_${t}_` : t;          // italic
+    const C = t => wa ? `\`${t}\`` : t;        // inline code
     const ps = parts();
     const labor = num(val("labor"));
     const partsTotal = ps.reduce((s, p) => s + p.total, 0);
-    const L = ["*OnSpot Appliance Repair — REPAIR AUTHORIZATION*"];
-    for (const [k, label] of shown) L.push(`${label}: ${q.get(k)}`);
+    const total = labor + partsTotal;
+    const g = k => q.get(k);
+    const L = [];
+
+    L.push(`🔧 ${B("ONSPOT APPLIANCE REPAIR")}`);
+    L.push(`📋 ${B("Repair Authorization Request")}`);
+    L.push(LINE);
+    if (g("customer"))  L.push(`👤 ${B(g("customer"))}`);
+    if (g("address"))   L.push(`📍 ${g("address")}`);
+    if (g("phone"))     L.push(`📞 ${g("phone")}`);
+    if (g("date"))      L.push(`🗓️ ${g("date")}`);
+    const wo = [g("job") && `WO ${C(g("job"))}`, g("company")].filter(Boolean).join("  •  ");
+    if (wo)             L.push(`🧾 ${wo}`);
     L.push("");
-    L.push(`Model #: ${val("model") || "—"}`);
-    L.push(`Serial #: ${val("serial") || "—"}`);
+
+    L.push(`🔌 ${B("APPLIANCE")}${g("appliance") ? "  " + g("appliance") : ""}`);
+    L.push(`Model:  ${C(val("model") || "—")}`);
+    L.push(`Serial:  ${C(val("serial") || "—")}`);
     L.push("");
+
     if (ps.length) {
-      L.push("*Parts needed:*");
-      ps.forEach((p, i) => L.push(`${i + 1}. ${p.name || "(no name)"} — Qty ${p.qty} × ${money(p.cost)} = ${money(p.total)}`));
+      L.push(`🔩 ${B("PARTS NEEDED")} (${ps.length})`);
+      ps.forEach((p, i) => {
+        L.push(`${KEYCAP[i] || (i + 1) + "."} ${B(p.name || "Part")}`);
+        L.push(`      ${p.qty} × ${money(p.cost)} = ${B(money(p.total))}`);
+      });
     } else {
-      L.push("Parts needed: No");
+      L.push(`🔩 ${B("PARTS NEEDED")}  None`);
     }
     L.push("");
-    L.push(`Labor: ${money(labor)}`);
-    L.push(`Parts: ${money(partsTotal)}`);
-    L.push(`*TOTAL: ${money(labor + partsTotal)}*`);
-    if (val("notes")) { L.push(""); L.push(`Notes: ${val("notes")}`); }
+
+    L.push(`💵 ${B("COST BREAKDOWN")}`);
+    const rows = [["Labor", money(labor)], ["Parts", money(partsTotal)]];
+    if (wa) {
+      const w = Math.max(...rows.map(r => r[1].length));
+      L.push("```");
+      rows.forEach(([a, b]) => L.push(a.padEnd(8) + b.padStart(w)));
+      L.push("```");
+    } else {
+      rows.forEach(([a, b]) => L.push(`${a}: ${b}`));
+    }
+    L.push(`✅ ${B("TOTAL: " + money(total))}`);
+
+    if (val("notes")) {
+      L.push("");
+      L.push(`📝 ${B("NOTES")}`);
+      val("notes").split("\n").forEach(n => L.push(wa ? `> ${n}` : n));
+    }
+    L.push(LINE);
+    L.push(I("Please review and approve 🙏"));
     return { text: L.join("\n"), labor, partsTotal, ps };
+  }
+
+  // Shows the preview the way WhatsApp will display it
+  function renderWA(text) {
+    const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const out = []; let mono = null;
+    for (const line of text.split("\n")) {
+      if (line === "```") {
+        if (mono) { out.push(`<pre>${esc(mono.join("\n"))}</pre>`); mono = null; } else mono = [];
+        continue;
+      }
+      if (mono) { mono.push(line); continue; }
+      let h = esc(line)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*([^*]+)\*/g, "<b>$1</b>")
+        .replace(/(^|\s)_([^_]+)_(?=\s|$)/g, "$1<i>$2</i>");
+      if (h.startsWith("&gt; ")) h = `<span class="q">${h.slice(5)}</span>`;
+      out.push(h || "&nbsp;");
+    }
+    return out.map(l => l.startsWith("<pre>") ? l : `<div>${l}</div>`).join("");
   }
 
   function refresh() {
@@ -227,7 +291,7 @@
     $("tLabor").textContent = money(m.labor);
     $("tParts").textContent = money(m.partsTotal);
     $("tTotal").textContent = money(m.labor + m.partsTotal);
-    $("preview").textContent = m.text;
+    $("preview").innerHTML = renderWA(m.text);
   }
   document.querySelectorAll("main input, main textarea").forEach(el => el.addEventListener("input", refresh));
   refresh();
@@ -270,12 +334,14 @@
 
   $("btnWa").onclick = () => {
     if (!ok()) return;
-    location.href = `https://wa.me/${OFFICE_WHATSAPP}?text=${encodeURIComponent(message().text)}`;
+    // api.whatsapp.com instead of wa.me: the wa.me redirect breaks emojis (they arrive as �)
+    const phone = OFFICE_WHATSAPP ? `phone=${OFFICE_WHATSAPP}&` : "";
+    location.href = `https://api.whatsapp.com/send?${phone}text=${encodeURIComponent(message("wa").text)}`;
   };
   $("btnSms").onclick = () => {
     if (!ok()) return;
     // "?&body=" works on both iPhone and Android
-    location.href = `sms:${OFFICE_SMS}?&body=${encodeURIComponent(message().text)}`;
+    location.href = `sms:${OFFICE_SMS}?&body=${encodeURIComponent(message("sms").text)}`;
   };
 
 </script>
