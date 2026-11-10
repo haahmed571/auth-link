@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Repair Authorization</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f2a4a">
+<link rel="apple-touch-icon" href="logo.png">
 <script>
   /* ====== SETTINGS ======
      Leave both "" (empty) = every time you send, WhatsApp / Messages lets you
@@ -60,9 +63,10 @@
 </style>
 </head>
 <body>
+<div id="offline" hidden style="background:#b42318;color:#fff;text-align:center;font-size:13px;padding:6px">No signal: fill it out now. WhatsApp will send it when signal comes back.</div>
 <header>
   <div class="brand">
-    <img src="https://onspotappliancerepair.com/img/onspot_logo.png" alt="OnSpot Appliance Repair">
+    <img src="logo.png" alt="OnSpot Appliance Repair">
     <div>
       <div class="co">OnSpot Appliance Repair LLC</div>
       <div class="contact"><a href="tel:+15712346772">(571) 234-6772</a> · <a href="mailto:services@onspotappliancerepair.com">services@onspotappliancerepair.com</a></div>
@@ -238,6 +242,31 @@
     if (msg) $("err").scrollIntoView({ behavior: "smooth", block: "center" });
     return !msg;
   }
+
+  // offline support + banner
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  const net = () => { $("offline").hidden = navigator.onLine; };
+  addEventListener("online", net); addEventListener("offline", net); net();
+
+  // keep what was typed if the page gets closed (per job link)
+  const KEY = "auth-draft:" + location.search;
+  const save = () => { try {
+    localStorage.setItem(KEY, JSON.stringify({
+      model: val("model"), serial: val("serial"), labor: val("labor"), notes: val("notes"), on: partsNeeded,
+      parts: parts().map(p => [p.el.querySelector(".p-name").value, p.el.querySelector(".p-qty").value, p.el.querySelector(".p-cost").value])
+    }));
+  } catch (e) {} };
+  try {
+    const d = JSON.parse(localStorage.getItem(KEY) || "null");
+    if (d) {
+      ["model", "serial", "labor", "notes"].forEach(k => $(k).value = d[k] || "");
+      if (d.on) { setParts(true); $("partsList").innerHTML = ""; d.parts.forEach(([n, q, c]) => {
+        addPart(); const el = $("partsList").lastElementChild;
+        el.querySelector(".p-name").value = n; el.querySelector(".p-qty").value = q; el.querySelector(".p-cost").value = c; }); }
+      refresh();
+    }
+  } catch (e) {}
+  document.addEventListener("input", save); document.addEventListener("click", () => setTimeout(save, 0));
 
   $("btnWa").onclick = () => {
     if (!ok()) return;
