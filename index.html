@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repair Authorization</title>
+<script>
+  /* ====== SETTINGS ======
+     Leave both "" (empty) = every time you send, WhatsApp / Messages lets you
+     CHOOSE the person or group. Put a number in only if you want it to always go to one place. */
+  const OFFICE_WHATSAPP = ""; // e.g. "15712346772"
+  const OFFICE_SMS      = ""; // e.g. "+15712346772"
+</script>
+<style>
+  :root { --navy:#0f2a4a; --gold:#d4a017; --bg:#f3f5f8; --card:#fff; --ink:#1b2430; --muted:#6b7686; --line:#dde2e9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--navy); color:#fff; padding:18px 16px 14px; border-bottom:4px solid var(--gold); }
+  header h1 { margin:0; font-size:20px; }
+  .brand { display:flex; align-items:center; gap:12px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,.15); }
+  .brand img { height:46px; width:auto; background:#fff; border-radius:8px; padding:4px; }
+  .brand .co { font-weight:800; font-size:16px; color:var(--gold); }
+  .brand .contact { font-size:12px; opacity:.85; margin-top:2px; word-break:break-word; }
+  .brand a { color:#fff; text-decoration:none; }
+  header p { margin:4px 0 0; font-size:13px; opacity:.8; }
+  main { max-width:520px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  .card h2 { margin:0 0 4px; font-size:15px; color:var(--navy); text-transform:uppercase; letter-spacing:.04em; }
+  .job div { display:flex; gap:10px; padding:5px 0; font-size:15px; border-bottom:1px dashed var(--line); }
+  .job div:last-child { border-bottom:0; }
+  .job b { min-width:90px; color:var(--muted); font-weight:600; }
+  label { display:block; font-weight:600; font-size:14px; margin:12px 0 6px; }
+  input, textarea, select, button { font-family:inherit; }
+  input, textarea { width:100%; font-size:17px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); }
+  textarea { min-height:80px; resize:vertical; }
+  .req { color:#b42318; }
+  .toggle { display:flex; gap:8px; margin-top:6px; }
+  .toggle button { margin:0; padding:12px; font-size:16px; background:#fff; color:var(--navy); border:2px solid var(--line); }
+  .toggle button.on { border-color:var(--navy); background:var(--navy); color:#fff; }
+  .part { border:1px solid var(--line); border-radius:10px; padding:10px 12px 12px; margin-top:12px; background:#fafbfc; }
+  .part-head { display:flex; justify-content:space-between; align-items:center; font-weight:700; font-size:14px; color:var(--muted); }
+  .part-head button { width:auto; margin:0; padding:4px 10px; font-size:13px; background:none; color:#b42318; border:1px solid #f1c4c0; border-radius:8px; }
+  .part label { margin-top:8px; font-size:13px; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; min-width:0; }
+  .row > .qty { flex:0 0 80px; }
+  .line-total { text-align:right; font-size:14px; color:var(--muted); margin-top:8px; }
+  button { width:100%; font-size:17px; font-weight:700; padding:15px; border:0; border-radius:12px; margin-top:10px; cursor:pointer; }
+  .add { background:#fff; color:var(--navy); border:2px dashed var(--navy); font-size:15px; padding:12px; }
+  .totals div { display:flex; justify-content:space-between; padding:6px 0; font-size:16px; }
+  .totals .grand { border-top:2px solid var(--navy); margin-top:4px; padding-top:10px; font-weight:800; font-size:19px; color:var(--navy); }
+  .money { position:relative; }
+  .money span { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--muted); font-size:17px; }
+  .money input { padding-left:26px; }
+  .wa { background:#25d366; color:#fff; }
+  .sms { background:var(--navy); color:#fff; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .err { color:#b42318; font-size:14px; margin-top:10px; display:none; }
+  #preview { white-space:pre-wrap; font-family:ui-monospace,Menlo,monospace; font-size:13px; background:#f7f8fa; border-radius:8px; padding:10px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img src="https://onspotappliancerepair.com/img/onspot_logo.png" alt="OnSpot Appliance Repair">
+    <div>
+      <div class="co">OnSpot Appliance Repair LLC</div>
+      <div class="contact"><a href="tel:+15712346772">(571) 234-6772</a> · <a href="mailto:services@onspotappliancerepair.com">services@onspotappliancerepair.com</a></div>
+    </div>
+  </div>
+  <h1>Repair Authorization</h1>
+  <p>Technician fills this out and sends it to the office</p>
+</header>
+<main>
+  <div class="card job" id="job"></div>
+
+  <div class="card">
+    <h2>Unit</h2>
+    <label for="model">Model # <span class="req">*</span></label>
+    <input id="model" autocomplete="off" autocapitalize="characters" placeholder="Model number">
+    <label for="serial">Serial # <span class="req">*</span></label>
+    <input id="serial" autocomplete="off" autocapitalize="characters" placeholder="Serial number">
+  </div>
+
+  <div class="card">
+    <h2>Parts</h2>
+    <label>Parts needed?</label>
+    <div class="toggle">
+      <button type="button" id="partsYes">Yes</button>
+      <button type="button" id="partsNo" class="on">No</button>
+    </div>
+    <div id="partsBox" hidden>
+      <div id="partsList"></div>
+      <button type="button" class="add" id="addPart">+ Add another part</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Amounts</h2>
+    <label for="labor">Labor amount</label>
+    <div class="money"><span>$</span><input id="labor" inputmode="decimal" placeholder="0.00"></div>
+    <div class="totals" style="margin-top:12px">
+      <div><span>Labor</span><span id="tLabor">$0.00</span></div>
+      <div><span>Parts</span><span id="tParts">$0.00</span></div>
+      <div class="grand"><span>Total</span><span id="tTotal">$0.00</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Notes</h2>
+    <textarea id="notes" placeholder="Problem found, diagnosis, anything the office should know"></textarea>
+  </div>
+
+  <div class="card">
+    <b style="font-size:14px">Message preview</b>
+    <div id="preview"></div>
+  </div>
+
+  <div class="err" id="err"></div>
+  <button class="wa" id="btnWa">Send on WhatsApp</button>
+  <button class="sms" id="btnSms">Send as Text Message</button>
+  <div class="hint" style="text-align:center">You'll pick the person or group to send it to.</div>
+</main>
+
+<template id="partTpl">
+  <div class="part">
+    <div class="part-head"><span class="pn">Part 1</span><button type="button" class="rm">Remove</button></div>
+    <label>Part name / part #</label>
+    <input class="p-name" placeholder="e.g. Defrost heater  WR51X10055">
+    <div class="row">
+      <div class="qty"><label>Qty</label><input class="p-qty" inputmode="numeric" value="1"></div>
+      <div><label>Cost each</label><div class="money"><span>$</span><input class="p-cost" inputmode="decimal" placeholder="0.00"></div></div>
+    </div>
+    <div class="line-total">Line total: <b class="p-total">$0.00</b></div>
+  </div>
+</template>
+
+<script>
+  // Job details come from the link the office script creates:  ...?customer=..&date=..&address=..
+  const q = new URLSearchParams(location.search);
+  const FIELDS = [
+    ["job", "Job #"], ["customer", "Customer"], ["phone", "Phone"], ["address", "Address"],
+    ["date", "Date"], ["appliance", "Appliance"], ["company", "Warranty co."]
+  ];
+  const $ = id => document.getElementById(id);
+  const val = id => $(id).value.trim();
+  const num = s => { const n = parseFloat(String(s).replace(/[^0-9.]/g, "")); return isFinite(n) ? n : 0; };
+  const money = n => "$" + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  const shown = FIELDS.filter(([k]) => q.get(k));
+  if (shown.length) {
+    for (const [k, label] of shown) {
+      const d = document.createElement("div");
+      const b = document.createElement("b"); b.textContent = label;
+      const s = document.createElement("span"); s.textContent = q.get(k);
+      d.append(b, s); $("job").append(d);
+    }
+  } else {
+    $("job").innerHTML = '<span class="hint">No job details in this link.</span>';
+  }
+
+  // ---- parts ----
+  let partsNeeded = false;
+  function setParts(on) {
+    partsNeeded = on;
+    $("partsYes").classList.toggle("on", on);
+    $("partsNo").classList.toggle("on", !on);
+    $("partsBox").hidden = !on;
+    if (on && !$("partsList").children.length) addPart();
+    refresh();
+  }
+  function addPart() {
+    const el = $("partTpl").content.firstElementChild.cloneNode(true);
+    el.querySelector(".rm").onclick = () => { el.remove(); if (!$("partsList").children.length) setParts(false); refresh(); };
+    el.querySelectorAll("input").forEach(i => i.addEventListener("input", refresh));
+    $("partsList").append(el);
+    refresh();
+    el.querySelector(".p-name").focus();
+  }
+  function parts() {
+    if (!partsNeeded) return [];
+    return [...$("partsList").children].map(el => {
+      const qty = num(el.querySelector(".p-qty").value) || 1;
+      const cost = num(el.querySelector(".p-cost").value);
+      return { el, name: el.querySelector(".p-name").value.trim(), qty, cost, total: qty * cost };
+    });
+  }
+  $("partsYes").onclick = () => setParts(true);
+  $("partsNo").onclick = () => setParts(false);
+  $("addPart").onclick = addPart;
+
+  // ---- message ----
+  function message() {
+    const ps = parts();
+    const labor = num(val("labor"));
+    const partsTotal = ps.reduce((s, p) => s + p.total, 0);
+    const L = ["*OnSpot Appliance Repair — REPAIR AUTHORIZATION*"];
+    for (const [k, label] of shown) L.push(`${label}: ${q.get(k)}`);
+    L.push("");
+    L.push(`Model #: ${val("model") || "—"}`);
+    L.push(`Serial #: ${val("serial") || "—"}`);
+    L.push("");
+    if (ps.length) {
+      L.push("*Parts needed:*");
+      ps.forEach((p, i) => L.push(`${i + 1}. ${p.name || "(no name)"} — Qty ${p.qty} × ${money(p.cost)} = ${money(p.total)}`));
+    } else {
+      L.push("Parts needed: No");
+    }
+    L.push("");
+    L.push(`Labor: ${money(labor)}`);
+    L.push(`Parts: ${money(partsTotal)}`);
+    L.push(`*TOTAL: ${money(labor + partsTotal)}*`);
+    if (val("notes")) { L.push(""); L.push(`Notes: ${val("notes")}`); }
+    return { text: L.join("\n"), labor, partsTotal, ps };
+  }
+
+  function refresh() {
+    const m = message();
+    m.ps.forEach((p, i) => {
+      p.el.querySelector(".pn").textContent = `Part ${i + 1}`;
+      p.el.querySelector(".p-total").textContent = money(p.total);
+    });
+    $("tLabor").textContent = money(m.labor);
+    $("tParts").textContent = money(m.partsTotal);
+    $("tTotal").textContent = money(m.labor + m.partsTotal);
+    $("preview").textContent = m.text;
+  }
+  document.querySelectorAll("main input, main textarea").forEach(el => el.addEventListener("input", refresh));
+  refresh();
+
+  function ok() {
+    let msg = "";
+    if (!val("model")) msg = "Please enter the model number.";
+    else if (!val("serial")) msg = "Please enter the serial number.";
+    else if (parts().some(p => !p.name)) msg = "Please enter a name for each part (or remove it).";
+    $("err").textContent = msg;
+    $("err").style.display = msg ? "block" : "none";
+    if (msg) $("err").scrollIntoView({ behavior: "smooth", block: "center" });
+    return !msg;
+  }
+
+  $("btnWa").onclick = () => {
+    if (!ok()) return;
+    location.href = `https://wa.me/${OFFICE_WHATSAPP}?text=${encodeURIComponent(message().text)}`;
+  };
+  $("btnSms").onclick = () => {
+    if (!ok()) return;
+    // "?&body=" works on both iPhone and Android
+    location.href = `sms:${OFFICE_SMS}?&body=${encodeURIComponent(message().text)}`;
+  };
+
+</script>
+</body>
+</html>
