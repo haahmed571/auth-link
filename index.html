@@ -13,6 +13,9 @@
      OFFICE_WHATSAPP is only used on browsers with no share menu (falls back to a WhatsApp text link).
      Leave "" to choose the chat each time. */
   const OFFICE_WHATSAPP = ""; // e.g. "15712346772"
+  /* Reading Model # / Serial # from photos: done on the phone first (free, works offline).
+     If that misses, and a free key from https://ocr.space/ocrapi is pasted here, it tries OCR.space online. */
+  const OCRSPACE_KEY = ""; // e.g. "K81234567888957"
 </script>
 <style>
   :root { --navy:#0f2a4a; --gold:#d4a017; --bg:#f3f5f8; --card:#fff; --ink:#1b2430; --muted:#6b7686; --line:#dde2e9; }
@@ -70,6 +73,11 @@
   .ph img { width:100%; height:100%; object-fit:cover; display:block; }
   .ph .x { position:absolute; top:6px; right:6px; width:30px; height:30px; margin:0; padding:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:15px; line-height:30px; }
   .add:disabled { opacity:.45; cursor:default; }
+  input.found { background:#fff7d6; border-color:var(--gold); }
+  .fnote { font-size:13px; color:#8a6500; margin-top:5px; }
+  .fnote:empty { display:none; }
+  .fnote button { width:auto; margin:0 0 0 6px; padding:3px 12px; font-size:13px; border-radius:8px; background:var(--navy); color:#fff; }
+  #scanStatus { font-size:13px; color:var(--muted); margin-top:10px; }
   #preview pre { font-family:ui-monospace,Menlo,monospace; font-size:13px; margin:2px 0; white-space:pre; overflow-x:auto; }
   #preview code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:rgba(0,0,0,.06); padding:0 4px; border-radius:4px; }
   #preview .q { display:block; border-left:3px solid #6b7686; padding-left:8px; color:#3b4a54; }
@@ -95,8 +103,12 @@
     <h2>Unit</h2>
     <label for="model">Model # <span class="req">*</span></label>
     <input id="model" autocomplete="off" autocapitalize="characters" placeholder="Model number">
+    <div class="fnote" id="modelNote"></div>
     <label for="serial">Serial # <span class="req">*</span></label>
     <input id="serial" autocomplete="off" autocapitalize="characters" placeholder="Serial number">
+    <div class="fnote" id="serialNote"></div>
+    <div id="scanStatus" hidden></div>
+    <div class="hint">Tip: add a photo of the rating label and these fill in by themselves.</div>
   </div>
 
   <div class="card">
@@ -389,11 +401,215 @@
     const files = [...e.target.files].slice(0, MAX_PHOTOS - photos.length);
     e.target.value = "";
     for (const f of files) {
-      try { const b = await shrink(f); if (b) await addBlob(b); }
+      try {
+        const b = await shrink(f);
+        if (b) {
+          await addBlob(b);
+          if (!(val("model") && val("serial"))) scanCopy(f).then(img => queueScan({ img, blob: b })).catch(() => {});
+        }
+      }
       catch (err) { alert("Couldn't read that photo. Try taking it again."); }
     }
     drawPhotos(); savePhotos();
   };
+
+  // ---- read Model # / Serial # from a photo (no AI) ----
+  // 1) barcodes (ZXing / phone's BarcodeDetector)  2) text OCR on the phone (Tesseract.js)
+  // 3) OCR.space online, only if still missing and OCRSPACE_KEY is set. Typed text is never overwritten.
+  const loadScript = src => new Promise((res, rej) => {
+    if (document.querySelector(`script[src="${src}"]`)) return res();
+    const s = document.createElement("script"); s.src = src; s.onload = res;
+    s.onerror = () => rej(new Error("couldn't load " + src)); document.head.append(s);
+  });
+  let ocrWorker;
+  function getOcr() {
+    const abs = p => new URL(p, location.href).href;
+    return ocrWorker ||= loadScript("vendor/tesseract/tesseract.min.js").then(() =>
+      Tesseract.createWorker("eng", 1, {
+        workerPath: abs("vendor/tesseract/worker.min.js"), corePath: abs("vendor/tesseract/core/"),
+        langPath: abs("vendor/tesseract/lang"), workerBlobURL: false
+      })).catch(e => { ocrWorker = null; throw e; });
+  }
+
+  // label text is small: read a sharper copy (up to 2400px) than the 1600px one that gets sent
+  async function scanCopy(file) {
+    const u = URL.createObjectURL(file);
+    try {
+      const i = await loadImg(u), s = Math.min(1, 2400 / Math.max(i.naturalWidth, i.naturalHeight));
+      const c = document.createElement("canvas"); c.width = Math.round(i.naturalWidth * s); c.height = Math.round(i.naturalHeight * s);
+      c.getContext("2d").drawImage(i, 0, 0, c.width, c.height);
+      return c;
+    } finally { URL.revokeObjectURL(u); }
+  }
+
+  // grayscale + contrast stretch, optionally rotated (labels are often shot sideways)
+  function prep(img, rot = 0) {
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height, side = rot % 180 !== 0;
+    const c = document.createElement("canvas"); c.width = side ? h : w; c.height = side ? w : h;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    x.translate(c.width / 2, c.height / 2); x.rotate(rot * Math.PI / 180); x.drawImage(img, -w / 2, -h / 2);
+    const d = x.getImageData(0, 0, c.width, c.height), p = d.data, hist = new Uint32Array(256);
+    for (let i = 0; i < p.length; i += 4) { const g = (p[i] * 299 + p[i + 1] * 587 + p[i + 2] * 114) / 1000 | 0; p[i] = g; hist[g]++; }
+    let lo = 0, hi = 255, n = 0, cut = p.length / 4 * 0.01;
+    while (lo < 255 && (n += hist[lo]) < cut) lo++;
+    n = 0; while (hi > 0 && (n += hist[hi]) < cut) hi--;
+    const k = 255 / Math.max(1, hi - lo);
+    for (let i = 0; i < p.length; i += 4) { const g = Math.max(0, Math.min(255, (p[i] - lo) * k)); p[i] = p[i + 1] = p[i + 2] = g; }
+    x.setTransform(1, 0, 0, 1, 0, 0); x.putImageData(d, 0, 0);
+    return c;
+  }
+
+  async function readBarcodes(canvas) {
+    const out = new Set();
+    try { if ("BarcodeDetector" in window) (await new BarcodeDetector().detect(canvas)).forEach(b => out.add(b.rawValue)); } catch (e) {}
+    if (out.size) return [...out];
+    try {
+      await loadScript("vendor/zxing/zxing.min.js");
+      const hints = new Map([[ZXing.DecodeHintType.TRY_HARDER, true]]);
+      const W = canvas.width, H = canvas.height;
+      // ZXing finds one code per pass, so also look at the top / middle / bottom half
+      for (const [y, h] of [[0, H], [0, H / 2], [H / 4, H / 2], [H / 2, H / 2]]) {
+        const part = document.createElement("canvas"); part.width = W; part.height = Math.round(h);
+        part.getContext("2d").drawImage(canvas, 0, Math.round(y), W, Math.round(h), 0, 0, W, Math.round(h));
+        try {
+          const bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(part)));
+          out.add(new ZXing.MultiFormatReader().decode(bmp, hints).getText());
+        } catch (e) {} // no code in this part
+      }
+    } catch (e) {}
+    return [...out];
+  }
+
+  // finds the value after "MODEL" / "SERIAL" style labels
+  function findModelSerial(text) {
+    const lines = String(text).toUpperCase().split(/\r?\n/).map(l => l.replace(/[|[\]{}()"'“”]/g, " ").trim()).filter(Boolean);
+    const phone = t => /^1?-?\(?\d{3}\)?[-.]\d{3}[-.]\d{4}$/.test(t);
+    const ok = {
+      model: t => /^[A-Z0-9][A-Z0-9\-\/.]{3,24}$/.test(t) && /\d/.test(t) && (/[A-Z]/.test(t) || /^\d{4,}$/.test(t)) && !phone(t),
+      serial: t => /^[A-Z0-9][A-Z0-9\-\/.]{5,29}$/.test(t) && /\d/.test(t) && !phone(t)
+    };
+    // long keywords may run into "NO" (OCR often reads "SERIAL NO." as "SERIALNQ.")
+    const KEYS = { model: /\b(MODEL|MODELO)|\b(MOD|MDL|M\/N)\b/, serial: /\b(SERIAL|SERIE)|\b(SER|S\/N|SN)\b/ };
+    const found = {};
+    for (const [k, re] of Object.entries(KEYS)) {
+      for (let i = 0; i < lines.length && !found[k]; i++) {
+        const m = lines[i].match(re); if (!m) continue;
+        const rest = lines[i].slice(m.index + m[0].length).replace(/^(E\b|O\b|NO|N[O0Q]|NUMBER|NUM|NBR|CODE|NAME|DE|MODELE|[\s.:#\-\/,])*/, "");
+        let v = rest.split(/\s+/).find(ok[k]);
+        if (!v && lines[i + 1]) v = lines[i + 1].split(/\s+/).find(ok[k]);
+        if (v) found[k] = v.replace(/[.\-\/]+$/, "");
+      }
+    }
+    return found;
+  }
+
+  // OCR mixes up O/0, I/1, S/5, B/8: if a barcode is (almost) the same value, the barcode is exact
+  function fixWithBarcodes(found, codes) {
+    const norm = s => s.toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1").replace(/S/g, "5").replace(/B/g, "8").replace(/Z/g, "2").replace(/[^A-Z0-9]/g, "");
+    const dist = (a, b) => { // edit distance
+      const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+      for (let j = 1; j <= b.length; j++) d[0][j] = j;
+      for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      return d[a.length][b.length];
+    };
+    const plain = codes.map(c => c.trim().toUpperCase()).filter(c => !/^HTTPS?:/.test(c));
+    for (const k of ["model", "serial"]) {
+      if (!found[k]) continue;
+      const best = plain.find(c => dist(norm(c), norm(found[k])) <= 1);
+      if (best) found[k] = best;
+    }
+    // Whirlpool / Maytag / Samsung labels: barcodes ARE the model and serial, even if the text wasn't read.
+    // Leftover codes (with a letter, sensible length): more letters = model, the other = serial.
+    const used = new Set([found.model, found.serial]);
+    const letters = c => (c.match(/[A-Z]/g) || []).length;
+    const left = plain.filter(c => !used.has(c) && /^[A-Z0-9\-]{6,30}$/.test(c) && /[A-Z]/.test(c) && /\d/.test(c))
+      .sort((a, b) => letters(b) - letters(a));
+    if (!found.model && !found.serial && left.length >= 2) { found.model = left[0]; found.serial = left[1]; }
+    else if (!found.serial && left.length && letters(left[left.length - 1]) <= 3) found.serial = left[left.length - 1];
+    else if (!found.model && left.length && letters(left[0]) >= 3) found.model = left[0];
+  }
+
+  async function ocrSpace(blob) {
+    const fd = new FormData();
+    fd.append("apikey", OCRSPACE_KEY); fd.append("OCREngine", "2"); fd.append("scale", "true"); fd.append("file", blob, "label.jpg");
+    const j = await (await fetch("https://api.ocr.space/parse/image", { method: "POST", body: fd })).json();
+    return (j.ParsedResults || []).map(r => r.ParsedText).join("\n");
+  }
+
+  function applyFound(found) {
+    let any = false;
+    for (const k of ["model", "serial"]) {
+      const v = found[k], el = $(k), note = $(k + "Note");
+      if (!v) continue;
+      any = true;
+      if (!el.value.trim()) {
+        el.value = v; el.classList.add("found"); note.textContent = "From photo — please check it's right.";
+      } else if (el.value.trim().toUpperCase() !== v) {
+        note.textContent = "Photo says: " + v + " ";
+        const b = document.createElement("button"); b.type = "button"; b.textContent = "Use";
+        b.onclick = () => { el.value = v; el.classList.add("found"); note.textContent = "From photo — please check it's right."; refresh(); save(); };
+        note.append(b);
+      }
+    }
+    refresh(); save();
+    return any;
+  }
+  ["model", "serial"].forEach(k => $(k).addEventListener("input", () => { $(k).classList.remove("found"); $(k + "Note").textContent = ""; }));
+
+  let scanQueue = Promise.resolve(), scanning = 0;
+  const scanMsg = t => { $("scanStatus").textContent = t; $("scanStatus").hidden = !t; };
+  function queueScan(p) {
+    if (val("model") && val("serial")) return;
+    scanning++; scanMsg("🔍 Reading the label in the photo…");
+    scanQueue = scanQueue.then(() => scanPhoto(p)).catch(() => false).then(hit => {
+      if (--scanning) return;
+      if (hit) scanMsg("");
+      else { scanMsg("Couldn't read a model/serial from the photo — please type it in."); setTimeout(() => !scanning && scanMsg(""), 5000); }
+    });
+  }
+  // QR codes on some labels (GE: ...?M=GFE28GYNBFS&S=FR523942...) carry the exact model + serial
+  function fromCodes(codes) {
+    const out = {};
+    for (const c of codes) {
+      try {
+        const u = new URL(c), m = u.searchParams.get("M"), s = u.searchParams.get("S");
+        if (m && m.length >= 4) out.model = m.toUpperCase();
+        if (s && s.length >= 5) out.serial = s.toUpperCase();
+      } catch (e) {}
+    }
+    return out;
+  }
+
+  async function scanPhoto(p) {
+    if (val("model") && val("serial")) return true;
+    const base = prep(p.img);
+    const codes = await readBarcodes(base);
+    const qr = fromCodes(codes);
+    let found = {};
+    if (!(qr.model && qr.serial)) try {
+      const w = await getOcr();
+      // try straight, then sideways; keep the direction that found the most with the best confidence
+      let best = -1;
+      for (const rot of [0, 90, 270]) {
+        const r = (await w.recognize(rot ? prep(p.img, rot) : base)).data;
+        const f = findModelSerial(r.text), hits = (f.model ? 1 : 0) + (f.serial ? 1 : 0);
+        const score = hits * 100 + (r.confidence || 0);
+        if (score > best) { best = score; found = f; }
+        if (hits === 2 && r.confidence > 50) break;
+        if (rot === 0 && hits && r.confidence > 70) break; // clearly the right way up
+      }
+    } catch (e) {}
+    found = { model: qr.model || found.model, serial: qr.serial || found.serial };
+    if ((!found.model || !found.serial) && OCRSPACE_KEY && navigator.onLine) {
+      try {
+        const f = findModelSerial(await ocrSpace(p.blob));
+        found = { model: found.model || f.model, serial: found.serial || f.serial };
+      } catch (e) {}
+    }
+    fixWithBarcodes(found, codes);
+    return applyFound(found);
+  }
 
   // photos are too big for localStorage, so the draft keeps them in IndexedDB
   function idb(mode, fn) {
