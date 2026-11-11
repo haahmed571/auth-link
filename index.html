@@ -81,6 +81,31 @@
   #preview pre { font-family:ui-monospace,Menlo,monospace; font-size:13px; margin:2px 0; white-space:pre; overflow-x:auto; }
   #preview code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:rgba(0,0,0,.06); padding:0 4px; border-radius:4px; }
   #preview .q { display:block; border-left:3px solid #6b7686; padding-left:8px; color:#3b4a54; }
+  /* ---- 3 steps: tabs on top, Back / Next bar fixed at the bottom ---- */
+  header { padding:12px 16px 10px; }
+  .brand { padding-bottom:10px; margin-bottom:8px; }
+  .brand img { height:38px; }
+  header h1 { font-size:17px; }
+  header p { display:none; }
+  .steps { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line); }
+  .steps .in { max-width:520px; margin:0 auto; display:flex; gap:6px; padding:10px 16px; }
+  .steps button { flex:1; margin:0; padding:9px 4px; font-size:14px; font-weight:700; background:#fff; color:var(--muted); border:1px solid var(--line); border-radius:999px; }
+  .steps button.done { color:var(--navy); border-color:var(--navy); }
+  .steps button.done::before { content:"✓ "; }
+  .steps button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .step[hidden] { display:none; }
+  main { padding-bottom:110px; }
+  .navbar { position:fixed; left:0; right:0; bottom:0; z-index:5; background:#fff; border-top:1px solid var(--line); box-shadow:0 -2px 10px rgba(15,42,74,.06); }
+  .navbar .in { max-width:520px; margin:0 auto; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  .navbar .btns { display:flex; gap:10px; }
+  .navbar button { margin:0; padding:14px; }
+  #navBack { flex:0 0 100px; background:#fff; color:var(--navy); border:2px solid var(--line); }
+  #navNext { flex:1; background:var(--navy); color:#fff; }
+  #btnSend { flex:1; }
+  #pthumbs { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:10px; }
+  #pthumbs .ph { aspect-ratio:1; border-radius:10px; overflow:hidden; }
+  .clear { background:none; color:#b42318; border:1px solid #f1c4c0; font-size:14px; padding:10px; margin-top:6px; }
+  .navbar .err { margin:0 0 8px; text-align:center; }
 </style>
 </head>
 <body>
@@ -96,13 +121,20 @@
   <h1>Repair Authorization</h1>
   <p>Technician fills this out and sends it to the office</p>
 </header>
+<nav class="steps"><div class="in">
+  <button type="button" data-go="1">1 Unit</button>
+  <button type="button" data-go="2">2 Work</button>
+  <button type="button" data-go="3">3 Send</button>
+</div></nav>
 <main>
+ <section class="step" id="step1">
   <div class="card job" id="job"></div>
 
   <div class="card">
     <h2>Photos</h2>
     <div class="hint">Up to 3 — start with the model/serial tag, then the problem, the whole unit.</div>
     <input type="file" id="photoIn" accept="image/*" multiple hidden>
+    <div id="pthumbs" hidden></div>
     <button type="button" class="add" id="addPhoto">📷 Add photo</button>
   </div>
 
@@ -117,7 +149,9 @@
     <div id="scanStatus" hidden></div>
     <div class="hint">Tip: add a photo of the rating label above and these fill in by themselves.</div>
   </div>
+ </section>
 
+ <section class="step" id="step2" hidden>
   <div class="card">
     <h2>Parts</h2>
     <label>Parts needed?</label>
@@ -146,17 +180,28 @@
     <h2>Notes</h2>
     <textarea id="notes" placeholder="Problem found, diagnosis, anything the office should know"></textarea>
   </div>
+ </section>
 
+ <section class="step" id="step3" hidden>
   <div class="card">
-    <b style="font-size:14px">WhatsApp preview</b>
+    <h2>Check &amp; send</h2>
+    <div class="hint" style="margin-bottom:8px">This is what the office will get. Tap a step above to change anything.</div>
     <div class="chat"><div id="bubble"><div id="pgrid" hidden></div><div id="preview"></div></div></div>
   </div>
-
-  <div class="err" id="err"></div>
-  <button class="wa" id="btnSend">Send report</button>
-  <div class="hint" style="text-align:center">Pick WhatsApp or Messages, then the person or group.</div>
+  <div class="hint" style="text-align:center">Tap Send, pick WhatsApp or Messages, then the person or group.</div>
   <div class="hint" id="pasteHint" hidden style="text-align:center">If the text doesn't show with the photos, long-press the message box and tap Paste.</div>
+ </section>
+  <button type="button" class="clear" id="btnClear">🗑 Clear report</button>
 </main>
+
+<div class="navbar"><div class="in">
+  <div class="err" id="err"></div>
+  <div class="btns">
+    <button type="button" id="navBack">Back</button>
+    <button type="button" id="navNext">Next</button>
+    <button class="wa" id="btnSend" hidden>Send report</button>
+  </div>
+</div></div>
 
 <template id="partTpl">
   <div class="part">
@@ -320,20 +365,51 @@
     $("tParts").textContent = money(m.partsTotal);
     $("tTotal").textContent = money(m.labor + m.partsTotal);
     $("preview").innerHTML = renderWA(m.text);
+    if (typeof markSteps === "function") markSteps();
   }
   document.querySelectorAll("main input, main textarea").forEach(el => el.addEventListener("input", refresh));
   refresh();
 
   function ok() {
-    let msg = "";
-    if (!val("model")) msg = "Please enter the model number.";
-    else if (!val("serial")) msg = "Please enter the serial number.";
-    else if (parts().some(p => !p.name)) msg = "Please enter a name for each part (or remove it).";
+    let msg = "", step = 0, field = null;
+    if (!val("model")) { msg = "Please enter the model number."; step = 1; field = $("model"); }
+    else if (!val("serial")) { msg = "Please enter the serial number."; step = 1; field = $("serial"); }
+    else if (parts().some(p => !p.name)) {
+      msg = "Please enter a name for each part (or remove it)."; step = 2;
+      field = [...document.querySelectorAll(".p-name")].find(i => !i.value.trim());
+    }
+    if (step) goStep(step);
     $("err").textContent = msg;
     $("err").style.display = msg ? "block" : "none";
-    if (msg) $("err").scrollIntoView({ behavior: "smooth", block: "center" });
+    if (field) { field.scrollIntoView({ behavior: "smooth", block: "center" }); field.focus({ preventScroll: true }); }
     return !msg;
   }
+
+  // ---- steps: 1 Unit, 2 Work, 3 Send ----
+  var curStep = 1;
+  function markSteps() {
+    const done = { 1: !!(val("model") && val("serial")), 2: !!(val("labor") || parts().length), 3: false };
+    document.querySelectorAll(".steps button").forEach(b => {
+      const n = +b.dataset.go;
+      b.classList.toggle("on", n === curStep);
+      b.classList.toggle("done", done[n] && n !== curStep);
+    });
+  }
+  function goStep(n) {
+    curStep = n;
+    for (let i = 1; i <= 3; i++) $("step" + i).hidden = i !== n;
+    $("navBack").style.visibility = n === 1 ? "hidden" : "";
+    $("navNext").hidden = n === 3;
+    $("btnSend").hidden = n !== 3;
+    $("err").style.display = "none";
+    markSteps();
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll(".steps button").forEach(b => b.onclick = () => goStep(+b.dataset.go));
+  $("navNext").onclick = () => goStep(Math.min(3, curStep + 1));
+  $("navBack").onclick = () => goStep(Math.max(1, curStep - 1));
+  document.addEventListener("input", markSteps);
+  document.addEventListener("click", () => setTimeout(markSteps));
 
   // offline support + banner
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -381,8 +457,9 @@
     } finally { URL.revokeObjectURL(u); }
   }
   function drawPhotos() {
-    const g = $("pgrid");
+    const g = $("pgrid"), t = $("pthumbs");
     g.innerHTML = ""; g.className = "n" + photos.length; g.hidden = !photos.length;
+    t.innerHTML = ""; t.hidden = !photos.length;
     photos.forEach((p, i) => {
       const d = document.createElement("div"); d.className = "ph";
       const im = document.createElement("img"); im.src = p.url; im.alt = `Photo ${i + 1}`;
@@ -390,6 +467,7 @@
       x.setAttribute("aria-label", `Remove photo ${i + 1}`);
       x.onclick = () => { URL.revokeObjectURL(p.url); photos.splice(i, 1); drawPhotos(); savePhotos(); };
       d.append(im, x); g.append(d);
+      t.append(d.cloneNode(true)); t.lastChild.querySelector(".x").onclick = x.onclick; // same photo on step 1
     });
     const full = photos.length >= MAX_PHOTOS;
     $("addPhoto").disabled = full;
@@ -853,6 +931,18 @@
     location.href = `https://api.whatsapp.com/send?${phone}text=${encodeURIComponent(text)}`;
   };
 
+  // ---- clear the whole report (asks first) ----
+  $("btnClear").onclick = () => {
+    if (!confirm("Clear this report?\n\nModel, serial, parts, labor, notes and photos will be erased. This can't be undone.")) return;
+    ["model", "serial", "labor", "notes"].forEach(k => { $(k).value = ""; $(k).classList.remove("found"); });
+    ["modelNote", "serialNote"].forEach(k => $(k).textContent = "");
+    $("partsList").innerHTML = ""; setParts(false);
+    photos.forEach(p => URL.revokeObjectURL(p.url)); photos = []; drawPhotos(); savePhotos();
+    try { localStorage.removeItem(KEY); } catch (e) {}
+    refresh(); goStep(1);
+  };
+
+  goStep(1);
 </script>
 </body>
 </html>
