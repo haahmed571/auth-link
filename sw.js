@@ -1,5 +1,5 @@
 // Offline support: after the page is opened once with signal, it works with no signal.
-const CACHE = 'auth-link-v2';
+const CACHE = 'auth-link-v3';
 const FILES = ['./', './index.html', './logo.png', './manifest.json'];
 
 self.addEventListener('install', e => {

@@ -9,10 +9,10 @@
 <link rel="apple-touch-icon" href="logo.png">
 <script>
   /* ====== SETTINGS ======
-     Leave both "" (empty) = every time you send, WhatsApp / Messages lets you
-     CHOOSE the person or group. Put a number in only if you want it to always go to one place. */
+     "Send report" opens the phone's share menu: the tech picks WhatsApp or Messages, then the person/group.
+     OFFICE_WHATSAPP is only used on browsers with no share menu (falls back to a WhatsApp text link).
+     Leave "" to choose the chat each time. */
   const OFFICE_WHATSAPP = ""; // e.g. "15712346772"
-  const OFFICE_SMS      = ""; // e.g. "+15712346772"
 </script>
 <style>
   :root { --navy:#0f2a4a; --gold:#d4a017; --bg:#f3f5f8; --card:#fff; --ink:#1b2430; --muted:#6b7686; --line:#dde2e9; }
@@ -56,11 +56,20 @@
   .money span { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--muted); font-size:17px; }
   .money input { padding-left:26px; }
   .wa { background:#25d366; color:#fff; }
-  .sms { background:var(--navy); color:#fff; }
   .hint { font-size:12px; color:var(--muted); margin-top:6px; }
   .err { color:#b42318; font-size:14px; margin-top:10px; display:none; }
   .chat { background:#efeae2; border-radius:10px; padding:12px; margin-top:8px; }
-  #preview { background:#d9fdd3; border-radius:10px 0 10px 10px; padding:8px 10px; font-size:14.5px; line-height:1.4; color:#111b21; box-shadow:0 1px .5px rgba(11,20,26,.13); margin-left:auto; max-width:94%; word-wrap:break-word; }
+  #bubble { background:#d9fdd3; border-radius:10px 0 10px 10px; padding:3px; box-shadow:0 1px .5px rgba(11,20,26,.13); margin-left:auto; max-width:94%; }
+  #preview { padding:5px 7px 5px; font-size:14.5px; line-height:1.4; color:#111b21; word-wrap:break-word; }
+  #pgrid { display:grid; gap:3px; border-radius:8px; overflow:hidden; margin-bottom:3px; }
+  #pgrid.n1 { grid-template-columns:1fr; grid-auto-rows:220px; }
+  #pgrid.n2 { grid-template-columns:1fr 1fr; grid-auto-rows:170px; }
+  #pgrid.n3 { grid-template-columns:2fr 1fr; grid-template-rows:110px 110px; }
+  #pgrid.n3 .ph:first-child { grid-row:span 2; }
+  .ph { position:relative; background:#c8d1c4; }
+  .ph img { width:100%; height:100%; object-fit:cover; display:block; }
+  .ph .x { position:absolute; top:6px; right:6px; width:30px; height:30px; margin:0; padding:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:15px; line-height:30px; }
+  .add:disabled { opacity:.45; cursor:default; }
   #preview pre { font-family:ui-monospace,Menlo,monospace; font-size:13px; margin:2px 0; white-space:pre; overflow-x:auto; }
   #preview code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:rgba(0,0,0,.06); padding:0 4px; border-radius:4px; }
   #preview .q { display:block; border-left:3px solid #6b7686; padding-left:8px; color:#3b4a54; }
@@ -120,14 +129,21 @@
   </div>
 
   <div class="card">
+    <h2>Photos</h2>
+    <div class="hint">Up to 3 — e.g. model/serial tag, the problem, the whole unit.</div>
+    <input type="file" id="photoIn" accept="image/*" multiple hidden>
+    <button type="button" class="add" id="addPhoto">📷 Add photo</button>
+  </div>
+
+  <div class="card">
     <b style="font-size:14px">WhatsApp preview</b>
-    <div class="chat"><div id="preview"></div></div>
+    <div class="chat"><div id="bubble"><div id="pgrid" hidden></div><div id="preview"></div></div></div>
   </div>
 
   <div class="err" id="err"></div>
-  <button class="wa" id="btnWa">Send on WhatsApp</button>
-  <button class="sms" id="btnSms">Send as Text Message</button>
-  <div class="hint" style="text-align:center">You'll pick the person or group to send it to.</div>
+  <button class="wa" id="btnSend">Send report</button>
+  <div class="hint" style="text-align:center">Pick WhatsApp or Messages, then the person or group.</div>
+  <div class="hint" id="pasteHint" hidden style="text-align:center">If the text doesn't show with the photos, long-press the message box and tap Paste.</div>
 </main>
 
 <template id="partTpl">
@@ -332,16 +348,90 @@
   } catch (e) {}
   document.addEventListener("input", save); document.addEventListener("click", () => setTimeout(save, 0));
 
-  $("btnWa").onclick = () => {
-    if (!ok()) return;
-    // api.whatsapp.com instead of wa.me: the wa.me redirect breaks emojis (they arrive as �)
-    const phone = OFFICE_WHATSAPP ? `phone=${OFFICE_WHATSAPP}&` : "";
-    location.href = `https://api.whatsapp.com/send?${phone}text=${encodeURIComponent(message("wa").text)}`;
+  // ---- photos (1-3) ----
+  const MAX_PHOTOS = 3;
+  let photos = []; // { blob, url, img }
+  const loadImg = async src => { const i = new Image(); i.src = src; await i.decode(); return i; };
+  async function addBlob(blob) {
+    const url = URL.createObjectURL(blob);
+    photos.push({ blob, url, img: await loadImg(url) });
+  }
+  // shrink phone photos (3-5 MB) to ~300 KB so they send fast on weak signal
+  async function shrink(file) {
+    const u = URL.createObjectURL(file);
+    try {
+      const i = await loadImg(u);
+      const s = Math.min(1, 1600 / Math.max(i.naturalWidth, i.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(i.naturalWidth * s); c.height = Math.round(i.naturalHeight * s);
+      c.getContext("2d").drawImage(i, 0, 0, c.width, c.height);
+      return await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
+    } finally { URL.revokeObjectURL(u); }
+  }
+  function drawPhotos() {
+    const g = $("pgrid");
+    g.innerHTML = ""; g.className = "n" + photos.length; g.hidden = !photos.length;
+    photos.forEach((p, i) => {
+      const d = document.createElement("div"); d.className = "ph";
+      const im = document.createElement("img"); im.src = p.url; im.alt = `Photo ${i + 1}`;
+      const x = document.createElement("button"); x.type = "button"; x.className = "x"; x.textContent = "✕";
+      x.setAttribute("aria-label", `Remove photo ${i + 1}`);
+      x.onclick = () => { URL.revokeObjectURL(p.url); photos.splice(i, 1); drawPhotos(); savePhotos(); };
+      d.append(im, x); g.append(d);
+    });
+    const full = photos.length >= MAX_PHOTOS;
+    $("addPhoto").disabled = full;
+    $("addPhoto").textContent = full ? "3 photos added (max)" : photos.length ? "📷 Add another photo" : "📷 Add photo";
+    $("pasteHint").hidden = !photos.length;
+  }
+  $("addPhoto").onclick = () => $("photoIn").click();
+  $("photoIn").onchange = async e => {
+    const files = [...e.target.files].slice(0, MAX_PHOTOS - photos.length);
+    e.target.value = "";
+    for (const f of files) {
+      try { const b = await shrink(f); if (b) await addBlob(b); }
+      catch (err) { alert("Couldn't read that photo. Try taking it again."); }
+    }
+    drawPhotos(); savePhotos();
   };
-  $("btnSms").onclick = () => {
+
+  // photos are too big for localStorage, so the draft keeps them in IndexedDB
+  function idb(mode, fn) {
+    return new Promise((res, rej) => {
+      const o = indexedDB.open("auth-link", 1);
+      o.onupgradeneeded = () => o.result.createObjectStore("photos");
+      o.onerror = () => rej(o.error);
+      o.onsuccess = () => {
+        const t = o.result.transaction("photos", mode), r = fn(t.objectStore("photos"));
+        t.oncomplete = () => res(r.result); t.onerror = () => rej(t.error);
+      };
+    });
+  }
+  const savePhotos = () => idb("readwrite", s => s.put(photos.map(p => p.blob), KEY)).catch(() => {});
+  idb("readonly", s => s.get(KEY)).then(async blobs => {
+    for (const b of blobs || []) await addBlob(b);
+    drawPhotos();
+  }).catch(() => {});
+
+  // ---- the one send button: report text + photos through the phone's share menu ----
+  // Everything before navigator.share is synchronous so iPhone still counts it as part of the tap.
+  $("btnSend").onclick = async () => {
     if (!ok()) return;
-    // "?&body=" works on both iPhone and Android
-    location.href = `sms:${OFFICE_SMS}?&body=${encodeURIComponent(message("sms").text)}`;
+    const text = message("wa").text;
+    // safety net: WhatsApp on iPhone often drops the text when photos are shared, so it's ready to paste
+    if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+    const slug = (q.get("customer") || q.get("job") || "report").replace(/[^\w-]+/g, "-").slice(0, 40);
+    const files = photos.map((p, i) => new File([p.blob], `photo-${i + 1}-${slug}.jpg`, { type: "image/jpeg" }));
+    const data = files.length ? { files, text } : { text };
+    if (navigator.share && (!files.length || (navigator.canShare && navigator.canShare({ files })))) {
+      try { await navigator.share(data); }
+      catch (e) { if (e.name !== "AbortError") alert("Sending didn't work: " + e.message); }
+      return;
+    }
+    // no share menu in this browser: WhatsApp text link (api.whatsapp.com keeps emojis intact)
+    if (files.length) alert("This browser can't send photos. The report text will open in WhatsApp — attach the photos there.");
+    const phone = OFFICE_WHATSAPP ? `phone=${OFFICE_WHATSAPP}&` : "";
+    location.href = `https://api.whatsapp.com/send?${phone}text=${encodeURIComponent(text)}`;
   };
 
 </script>
