@@ -615,14 +615,24 @@
     return (j.ParsedResults || []).map(r => r.ParsedText).join("\n");
   }
 
-  function applyFound(found) {
+  // the button's scan: read the label, fill sure values, then unsure ones (with a stronger "check this" note)
+  async function scanPhoto(p) {
+    if (val("model") && val("serial")) return true;
+    const found = await readLabel(p);
+    const sure = applyFound(found);
+    const unsure = found.dropped ? applyFound(found.dropped, true) : false;
+    return sure || unsure;
+  }
+
+  function applyFound(found, unsure) {
     let any = false;
+    const msg = unsure ? "From photo, not sure — please check it against the label." : "From photo — please check it's right.";
     for (const k of ["model", "serial"]) {
       const v = found[k], el = $(k), note = $(k + "Note");
       if (!v) continue;
       any = true;
       if (!el.value.trim()) {
-        el.value = v; el.classList.add("found"); note.textContent = "From photo — please check it's right.";
+        el.value = v; el.classList.add("found"); note.textContent = msg;
       } else if (el.value.trim().toUpperCase() !== v) {
         note.textContent = "Photo says: " + v + " ";
         const b = document.createElement("button"); b.type = "button"; b.textContent = "Use";
@@ -778,7 +788,16 @@
         if (hits === 2 && r.confidence > 50) break;
         if (rot === 0 && hits && r.confidence > 70) break; // clearly the right way up
       }
-    } catch (e) {}
+    } catch (e) {
+      // new reader couldn't load/run on this phone: fall back to the original Tesseract reader
+      if (!found.model && !found.serial) try {
+        const w = await getOcr();
+        for (const rot of [0, 90, 270]) {
+          const f = findModelSerial((await w.recognize(rot ? prep(p.img, rot) : base)).data.text);
+          if (f.model || f.serial) { found = f; break; }
+        }
+      } catch (e2) {}
+    }
     found = { model: qr.model || found.model, serial: qr.serial || found.serial, conf: found.conf, byCode: { model: !!qr.model, serial: !!qr.serial } };
     if ((!found.model || !found.serial) && OCRSPACE_KEY && navigator.onLine) {
       try {
