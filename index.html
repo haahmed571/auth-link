@@ -104,6 +104,9 @@
   #btnSend { flex:1; }
   #pthumbs { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:10px; }
   #pthumbs .ph { aspect-ratio:1; border-radius:10px; overflow:hidden; }
+  .chead { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:4px; }
+  .chead h2 { margin:0; }
+  .cclear { width:auto; margin:0; padding:5px 12px; font-size:13px; font-weight:600; background:none; color:#b42318; border:1px solid #f1c4c0; border-radius:8px; }
   .clear { background:none; color:#b42318; border:1px solid #f1c4c0; font-size:14px; padding:10px; margin-top:6px; }
   .navbar .err { margin:0 0 8px; text-align:center; }
 </style>
@@ -366,6 +369,7 @@
     $("tTotal").textContent = money(m.labor + m.partsTotal);
     $("preview").innerHTML = renderWA(m.text);
     if (typeof markSteps === "function") markSteps();
+    if (typeof updateCardClears === "function") updateCardClears();
   }
   document.querySelectorAll("main input, main textarea").forEach(el => el.addEventListener("input", refresh));
   refresh();
@@ -473,6 +477,7 @@
     $("addPhoto").disabled = full;
     $("addPhoto").textContent = full ? "3 photos added (max)" : photos.length ? "📷 Add another photo" : "📷 Add photo";
     $("pasteHint").hidden = !photos.length;
+    if (typeof updateCardClears === "function") updateCardClears();
   }
   $("addPhoto").onclick = () => $("photoIn").click();
   $("photoIn").onchange = async e => {
@@ -942,7 +947,36 @@
     refresh(); goStep(1);
   };
 
-  goStep(1);
+  // ---- small Clear button on each card: wipes just that card (asks first, only shows when it has data) ----
+  const CARD_CLEAR = {
+    Photos:  { has: () => photos.length, what: "the photos",
+               clear: () => { photos.forEach(p => URL.revokeObjectURL(p.url)); photos = []; drawPhotos(); savePhotos(); } },
+    Unit:    { has: () => val("model") || val("serial"), what: "the model and serial",
+               clear: () => { ["model", "serial"].forEach(k => { $(k).value = ""; $(k).classList.remove("found"); $(k + "Note").textContent = ""; }); } },
+    Parts:   { has: () => partsNeeded, what: "all parts",
+               clear: () => { $("partsList").innerHTML = ""; setParts(false); } },
+    Amounts: { has: () => val("labor"), what: "the labor amount", clear: () => { $("labor").value = ""; } },
+    Notes:   { has: () => val("notes"), what: "the notes", clear: () => { $("notes").value = ""; } }
+  };
+  var cardClears = [];
+  document.querySelectorAll("main .card h2").forEach(h => {
+    const c = CARD_CLEAR[h.textContent.trim()];
+    if (!c) return;
+    const head = document.createElement("div"); head.className = "chead";
+    const b = document.createElement("button"); b.type = "button"; b.className = "cclear"; b.textContent = "Clear";
+    b.setAttribute("aria-label", "Clear " + c.what);
+    b.onclick = () => {
+      if (!confirm("Clear " + c.what + "?")) return;
+      c.clear(); refresh(); save(); updateCardClears();
+    };
+    h.replaceWith(head); head.append(h, b);
+    cardClears.push([b, c]);
+  });
+  function updateCardClears() { (cardClears || []).forEach(([b, c]) => b.hidden = !c.has()); }
+  document.addEventListener("input", updateCardClears);
+  document.addEventListener("click", () => setTimeout(updateCardClears));
+
+  goStep(1); updateCardClears();
 </script>
 </body>
 </html>
