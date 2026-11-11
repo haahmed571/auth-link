@@ -100,6 +100,13 @@
   <div class="card job" id="job"></div>
 
   <div class="card">
+    <h2>Photos</h2>
+    <div class="hint">Up to 3 — start with the model/serial tag, then the problem, the whole unit.</div>
+    <input type="file" id="photoIn" accept="image/*" multiple hidden>
+    <button type="button" class="add" id="addPhoto">📷 Add photo</button>
+  </div>
+
+  <div class="card">
     <h2>Unit</h2>
     <label for="model">Model # <span class="req">*</span></label>
     <input id="model" autocomplete="off" autocapitalize="characters" placeholder="Model number">
@@ -108,7 +115,7 @@
     <input id="serial" autocomplete="off" autocapitalize="characters" placeholder="Serial number">
     <div class="fnote" id="serialNote"></div>
     <div id="scanStatus" hidden></div>
-    <div class="hint">Tip: add a photo of the rating label and these fill in by themselves.</div>
+    <div class="hint">Tip: add a photo of the rating label above and these fill in by themselves.</div>
   </div>
 
   <div class="card">
@@ -138,13 +145,6 @@
   <div class="card">
     <h2>Notes</h2>
     <textarea id="notes" placeholder="Problem found, diagnosis, anything the office should know"></textarea>
-  </div>
-
-  <div class="card">
-    <h2>Photos</h2>
-    <div class="hint">Up to 3 — e.g. model/serial tag, the problem, the whole unit.</div>
-    <input type="file" id="photoIn" accept="image/*" multiple hidden>
-    <button type="button" class="add" id="addPhoto">📷 Add photo</button>
   </div>
 
   <div class="card">
@@ -442,6 +442,35 @@
     } finally { URL.revokeObjectURL(u); }
   }
 
+  // PaddleOCR (PP-OCRv4 via onnxruntime-web), wrapped to look like the Tesseract worker the reader expects
+  let paddle;
+  function getPaddle() {
+    return paddle ||= loadScript("vendor/paddle/paddle-ocr.js").then(async () => {
+      const { Ocr, ort } = window.PaddleOCR, abs = f => new URL("vendor/paddle/" + f, location.href).href;
+      ort.env.wasm.wasmPaths = abs(""); ort.env.wasm.numThreads = 1;
+      const ocr = await Ocr.create({ models: { detectionPath: abs("ch_PP-OCRv4_det_infer.onnx"),
+        recognitionPath: abs("ch_PP-OCRv4_rec_infer.onnx"), dictionaryPath: abs("ppocr_keys_v1.txt") } });
+      return {
+        async recognize(canvas) {
+          const id = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+          const res = await ocr.detect({ data: id.data, width: id.width, height: id.height });
+          const sx = canvas.width / (res.resizedImageWidth || canvas.width), sy = canvas.height / (res.resizedImageHeight || canvas.height);
+          const lines = (res.texts || []).map(t => {
+            const xs = t.box.map(p => p[0] * sx), ys = t.box.map(p => p[1] * sy);
+            return { text: t.text, mean: t.mean, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+          }).sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+          // split each line into words with estimated positions, Tesseract-style
+          const blocks = [{ paragraphs: [{ lines: lines.map(l => {
+            const parts = l.text.split(/\s+/).filter(Boolean), per = (l.x1 - l.x0) / Math.max(1, l.text.length); let x = l.x0;
+            return { words: parts.map(w => { const wd = { text: w, bbox: { x0: x, y0: l.y0, x1: x + per * w.length, y1: l.y1 } }; x += per * (w.length + 1); return wd; }) };
+          }) }] }];
+          const conf = lines.length ? 100 * lines.reduce((a, l) => a + l.mean, 0) / lines.length : 0;
+          return { data: { text: lines.map(l => l.text).join("\n"), confidence: conf, blocks, plines: lines } };
+        }
+      };
+    }).catch(e => { paddle = null; throw e; });
+  }
+
   // grayscale + contrast stretch, optionally rotated (labels are often shot sideways)
   function prep(img, rot = 0) {
     const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height, side = rot % 180 !== 0;
@@ -459,7 +488,30 @@
     return c;
   }
 
-  async function readBarcodes(canvas) {
+  // zxing-wasm (zxing-cpp): finds several barcodes per photo, also rotated ones
+  let zxw;
+  function getZxing() {
+    return zxw ||= loadScript("vendor/zxing-wasm/zxing-reader.js").then(() => {
+      const wasm = new URL("vendor/zxing-wasm/zxing_reader.wasm", location.href).href;
+      ZXingWASM.prepareZXingModule({ overrides: { locateFile: (f, pre) => f.endsWith(".wasm") ? wasm : pre + f } });
+      return ZXingWASM;
+    }).catch(e => { zxw = null; throw e; });
+  }
+  async function readBarcodes(canvas, color) {
+    const out = new Set();
+    try {
+      const Z = await getZxing();
+      for (const c of [color, canvas]) {
+        if (!c) continue;
+        const img = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+        (await Z.readBarcodes(img, { tryHarder: true, tryRotate: true, tryDownscale: true, maxNumberOfSymbols: 8 }))
+          .forEach(r => r.isValid !== false && r.text && out.add(r.text.trim()));
+      }
+    } catch (e) {}
+    (await readBarcodesOld(canvas)).forEach(t => out.add(t.trim()));
+    return [...out];
+  }
+  async function readBarcodesOld(canvas) {
     const out = new Set();
     try { if ("BarcodeDetector" in window) (await new BarcodeDetector().detect(canvas)).forEach(b => out.add(b.rawValue)); } catch (e) {}
     if (out.size) return [...out];
@@ -481,22 +533,42 @@
   }
 
   // finds the value after "MODEL" / "SERIAL" style labels
+  const FILL_W = /^(NO|NUMBER|NUM|NBR|CODE|NAME|DE|MODELE|SERIE|DATE|TYPE|MFG|REV|THE|AND|FOR|OF)$/;
   function findModelSerial(text) {
-    const lines = String(text).toUpperCase().split(/\r?\n/).map(l => l.replace(/[|[\]{}()"'“”]/g, " ").trim()).filter(Boolean);
-    const phone = t => /^1?-?\(?\d{3}\)?[-.]\d{3}[-.]\d{4}$/.test(t);
-    const ok = {
-      model: t => /^[A-Z0-9][A-Z0-9\-\/.]{3,24}$/.test(t) && /\d/.test(t) && (/[A-Z]/.test(t) || /^\d{4,}$/.test(t)) && !phone(t),
-      serial: t => /^[A-Z0-9][A-Z0-9\-\/.]{5,29}$/.test(t) && /\d/.test(t) && !phone(t)
-    };
+    const lines = String(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().split(/\r?\n/).map(l => l.replace(/[|[\]{}()"'“”]/g, " ").trim()).filter(Boolean);
+    const ok = okVal;
     // long keywords may run into "NO" (OCR often reads "SERIAL NO." as "SERIALNQ.")
     const KEYS = { model: /\b(MODEL|MODELO)|\b(MOD|MDL|M\/N)\b/, serial: /\b(SERIAL|SERIE)|\b(SER|S\/N|SN)\b/ };
     const found = {};
+    for (let i = 0; i + 1 < lines.length; i++) {
+      const L = lines[i];
+      if (!(KEYS.model.test(L) && KEYS.serial.test(L))) continue;
+      const after = L.replace(/.*\b(SERIAL|SER|S\/N)\b[^A-Z0-9]*(NO|NUMBER)?[.:#\s]*/, "");
+      if (after.split(/\s+/).some(t => ok.serial(t))) continue; // values are on this line, normal rules handle it
+      const vals = lines[i + 1].split(/\s+/).filter(t => ok.model(t) || ok.serial(t));
+      const mFirst = L.search(KEYS.model) < L.search(KEYS.serial);
+      if (vals.length >= 2) { found.model = mFirst ? vals[0] : vals[1]; found.serial = mFirst ? vals[1] : vals[0]; return found; }
+    }
     for (const [k, re] of Object.entries(KEYS)) {
       for (let i = 0; i < lines.length && !found[k]; i++) {
         const m = lines[i].match(re); if (!m) continue;
         const rest = lines[i].slice(m.index + m[0].length).replace(/^(E\b|O\b|NO|N[O0Q]|NUMBER|NUM|NBR|CODE|NAME|DE|MODELE|[\s.:#\-\/,])*/, "");
-        let v = rest.split(/\s+/).find(ok[k]);
-        if (!v && lines[i + 1]) v = lines[i + 1].split(/\s+/).find(ok[k]);
+        const pick = toks => {
+          const j = toks.findIndex(ok[k]); if (j < 0) return null;
+          let v = toks[j];
+          // short letter prefix in front ("TV 234749B", "FA 307818")
+          if (j > 0 && /^[A-Z]{1,3}$/.test(toks[j - 1]) && /^\d/.test(v) && !FILL_W.test(toks[j - 1]) && ok[k](toks[j - 1] + v)) v = toks[j - 1] + v;
+          // short pieces after it that contain a letter ("PFCS1RKZH SS", "GB9F HD XWS04"); not "01"-style version numbers
+          for (let n = j + 1; n < toks.length && n <= j + 3; n++) {
+            const t = toks[n];
+            if (!/^[A-Z0-9]{1,5}$/.test(t) || !/[A-Z]/.test(t) || /^(US|USA|UL|CUL|CSA|ETL|TM|CE|FCC|NSF|\d+TK)$/.test(t) || KEYS.model.test(t) || KEYS.serial.test(t) || FILL_W.test(t)) break;
+            if (!ok[k](v + t) || (v + t).length > 16) break;
+            v += t;
+          }
+          return v;
+        };
+        let v = pick(rest.split(/\s+/));
+        if (!v && lines[i + 1]) v = pick(lines[i + 1].split(/\s+/));
         if (v) found[k] = v.replace(/[.\-\/]+$/, "");
       }
     }
@@ -517,15 +589,21 @@
     for (const k of ["model", "serial"]) {
       if (!found[k]) continue;
       const best = plain.find(c => dist(norm(c), norm(found[k])) <= 1);
-      if (best) found[k] = best;
+      if (best) { found[k] = best; (found.byCode ||= {})[k] = true; }
     }
     // Whirlpool / Maytag / Samsung labels: barcodes ARE the model and serial, even if the text wasn't read.
     // Leftover codes (with a letter, sensible length): more letters = model, the other = serial.
+    const pair = plain.filter(c => /^[A-Z0-9\-]{6,30}$/.test(c) && /[A-Z]/.test(c) && /\d/.test(c));
+    const lettersN = c => (c.match(/[A-Z]/g) || []).length;
+    if (pair.length === 2 && (pair.includes(found.model) || pair.includes(found.serial) || (!found.model && !found.serial))) {
+      const [a, b] = [...pair].sort((x, y) => lettersN(y) - lettersN(x));
+      if (lettersN(a) > lettersN(b)) { found.model = a; found.serial = b; found.byCode = { model: true, serial: true }; return; }
+    }
     const used = new Set([found.model, found.serial]);
     const letters = c => (c.match(/[A-Z]/g) || []).length;
     const left = plain.filter(c => !used.has(c) && /^[A-Z0-9\-]{6,30}$/.test(c) && /[A-Z]/.test(c) && /\d/.test(c))
       .sort((a, b) => letters(b) - letters(a));
-    if (!found.model && !found.serial && left.length >= 2) { found.model = left[0]; found.serial = left[1]; }
+    if (!found.model && !found.serial && left.length >= 2) { found.model = left[0]; found.serial = left[1]; found.byCode = { model: true, serial: true }; }
     else if (!found.serial && left.length && letters(left[left.length - 1]) <= 3) found.serial = left[left.length - 1];
     else if (!found.model && left.length && letters(left[0]) >= 3) found.model = left[0];
   }
@@ -573,34 +651,135 @@
     const out = {};
     for (const c of codes) {
       try {
-        const u = new URL(c), m = u.searchParams.get("M"), s = u.searchParams.get("S");
-        if (m && m.length >= 4) out.model = m.toUpperCase();
-        if (s && s.length >= 5) out.serial = s.toUpperCase();
+        const u = new URL(c), q = {};
+        u.searchParams.forEach((v, k) => { q[k.toLowerCase()] = v; });
+        // GE: ?M=model&S=serial   LG: ?model=..&serial=..   LG ThinQ: ?n=LRSVS2706S.ASTCNA0
+        const m = q.model || q.m || (q.n && q.n.split(".")[0]), s = q.serial || q.s;
+        if (m && m.length >= 4 && /\d/.test(m)) out.model = m.toUpperCase();
+        if (s && s.length >= 5 && /\d/.test(s)) out.serial = s.toUpperCase();
       } catch (e) {}
     }
     return out;
   }
 
-  async function scanPhoto(p) {
-    if (val("model") && val("serial")) return true;
+  // things that look like codes but aren't: dates, ratings, phone numbers
+  const MONTHS = /^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)[A-Z]*[.\-\/]?\d*$/;
+  function junk(t) {
+    return /^1?-?\(?\d{3}\)?[-.]\d{3}[-.]\d{4}$/.test(t)                        // phone
+      || /^\d{1,4}[.\/-]\d{1,2}([.\/-]\d{1,4})?$/.test(t) || MONTHS.test(t)       // dates
+      || /^\d+([.,]\d+)?(V|VAC|VDC|V~|HZ|A|AMP|AMPS|W|KW|PSI|OZ|LB|LBS|G|KG|MM|CM|IN|BTU|KPA)$/.test(t) // ratings
+      || /(WIRE|VOLT|AMPS|PHASE|HERTZ|WATT|CONNECT|LISTED|PSI|SAMSUNG|CARES)/.test(t)
+      || /\d(HZ|VAC|V~)$/.test(t) || /^\d+A\d+HZ/.test(t) || /^1-?8(00|88|77|66|55|44)-/.test(t)
+      || /^Z21\./.test(t) || /^\d{1,2}\.\d{3,4}\.\d$/.test(t) || /^\d+\/\d[A-Z]?$/.test(t)
+      || /^\d{2,3}[\/-]\d{2,3}V/.test(t) || /^(E|EEV|LR|MH)\d{4,6}$/.test(t);     // 120/240V, UL/CSA file numbers
+  }
+  const okVal = {
+    model: t => !/[A-Z]{7,}/.test(t) && /^[A-Z0-9][A-Z0-9\-\/.]{3,24}$/.test(t) && /\d/.test(t) && (/[A-Z]/.test(t) || /^\d{4}$|^\d{6,}$|^\d+\.\d/.test(t)) && !junk(t),
+    serial: t => !/[A-Z]{7,}/.test(t) && /^[A-Z0-9][A-Z0-9\-\/.]{5,29}$/.test(t) && /\d/.test(t) && !junk(t)
+  };
+
+  // uses WHERE words are on the label: the value is right of the "MODEL"/"SERIAL" word, or just under it
+  // (handles table-style labels where the header row is above the values)
+  const KEYW = { model: /^(MODEL|MODELO|MOD|MDL|M\/N|MODELNO|MODNO|MODEL#|MODELNUMBER)$/,
+                 serial: /^(SERIAL|SERIE|SER|S\/N|SN|SERIALNO|SERNO|SERIAL#|SERIALNUMBER|SERIALNQ|SERIALN0)$/ };
+  const FILLER = /^(NO|N0|NQ|N°|NUMBER|NUM|NBR|CODE|NAME|DE|DU|MODELE|MODÈLE|SERIE|SÉRIE|#|I|L|\/)$/;
+  function findFromWords(raw) {
+    const clean = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[‐–—]/g, "-").replace(/[^A-Z0-9\/#.\-:°]/g, "");
+    // split glued words like "MODEL:E522B", "SERIALNO.D616...", "No.BUF-06W"
+    const words = [];
+    for (const w of raw) {
+      let t = clean(w.t); if (!t) continue;
+      const m = t.match(/^(MODEL|MOD|SERIAL|SER|S\/N|NO)(NO)?[.:#]*([A-Z0-9].{3,})$/);
+      const parts = m && !okVal.model(t) ? [m[1] + (m[2] || ""), m[3]] : t.includes(":") ? t.split(":").filter(Boolean) : [t];
+      let x = w.x0; const per = (w.x1 - w.x0) / Math.max(1, t.length);
+      for (const p of parts) { words.push({ ...w, t: p.replace(/^[.\-\/#]+|[.:\-#\/]+$/g, ""), x0: x, x1: x + per * p.length }); x += per * (p.length + 1); }
+    }
+    const kind = t => KEYW.model.test(t) ? "model" : KEYW.serial.test(t) ? "serial" : FILLER.test(t) ? "fill" : "";
+    // join neighbouring words on a line into chunks ("JEB1095SB 001", "TV 234749B")
+    const chunks = [];
+    words.forEach((w, i) => {
+      const prev = chunks[chunks.length - 1], h = w.y1 - w.y0;
+      if (prev && !kind(w.t) && !prev.k && prev.line === w.line && prev.n === 1 && w.x0 - prev.x1 < 0.6 * h
+          && (prev.t.length <= 3 || w.t.length <= 3) && (prev.t + w.t).length <= 25)
+        Object.assign(prev, { t: prev.t + w.t, x1: w.x1, y0: Math.min(prev.y0, w.y0), y1: Math.max(prev.y1, w.y1), n: prev.n + 1, parts: [...prev.parts, w.t] });
+      else chunks.push({ ...w, k: kind(w.t), n: 1, parts: [w.t] });
+    });
+    const cands = { model: [], serial: [] };
+    for (const kw of chunks.filter(c => c.k === "model" || c.k === "serial")) {
+      const h = Math.max(4, kw.y1 - kw.y0);
+      for (const c of chunks) {
+        if (c.k) continue;
+        // a joined chunk may hold a value plus a stray bit: try the whole thing, then each part
+        const opts = [c.t, ...(c.n > 1 ? c.parts : [])].filter(t => okVal[kw.k](t) && !/[A-Z]{7,}/.test(t));
+        if (!opts.length) continue;
+        const ov = Math.min(kw.y1, c.y1) - Math.max(kw.y0, c.y0);
+        let d = Infinity;
+        if (ov > 0.4 * Math.min(h, c.y1 - c.y0) && c.x0 >= kw.x1 - 0.3 * h) d = (c.x0 - kw.x1) / h;          // same line, to the right
+        if (d < 12) cands[kw.k].push({ t: opts[0], d, box: c });
+      }
+    }
+    const found = {}, boxes = {};
+    const order = ["model", "serial"].flatMap(k => cands[k].map(c => ({ ...c, k }))).sort((a, b) => a.d - b.d);
+    const used = new Set();
+    for (const c of order) {
+      if (found[c.k] || used.has(c.box)) continue;
+      found[c.k] = c.t; boxes[c.k] = c.box; used.add(c.box);
+    }
+    return { found, boxes, hasKeys: chunks.some(c => c.k === "model" || c.k === "serial") };
+  }
+
+  // heading on one line, value on the line right under it (Frigidaire, AGA, GE fridge tables)
+  function belowFill(plines, found) {
+    const up = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+    const KEY = { model: /\b(MODEL|MOD)\b/, serial: /\b(SERIAL|SER|S\/N)\b/ };
+    for (const k of ["model", "serial"]) {
+      if (found[k]) continue;
+      for (const h of plines) {
+        const t = up(h.text);
+        if (!KEY[k].test(t) || (k === "model" ? KEY.serial : KEY.model).test(t)) continue; // a heading for this field only
+        if (t.replace(/.*\b(MODEL|MOD|SERIAL|SER|S\/N)\b/, "").split(/[\s:.#]+/).some(okVal[k])) continue; // value is on the same line
+        const hh = h.y1 - h.y0, cx = (h.x0 + h.x1) / 2;
+        const under = plines.filter(l => l !== h && l.y0 >= h.y1 - 0.3 * hh && l.y0 - h.y1 < 2.5 * hh
+          && l.x0 < h.x1 + hh && l.x1 > h.x0 - hh && Math.abs((l.x0 + l.x1) / 2 - cx) < 3 * hh + (h.x1 - h.x0))
+          .sort((a, b) => a.y0 - b.y0);
+        for (const l of under) {
+          const v = up(l.text).split(/\s+/).find(okVal[k]);
+          if (v && v !== found.model && v !== found.serial) { found[k] = v; break; }
+        }
+        if (found[k]) break;
+      }
+    }
+  }
+
+  async function readLabel(p) {
     const base = prep(p.img);
-    const codes = await readBarcodes(base);
+    const codes = await readBarcodes(base, p.img.getContext ? p.img : null);
     const qr = fromCodes(codes);
     let found = {};
     if (!(qr.model && qr.serial)) try {
-      const w = await getOcr();
-      // try straight, then sideways; keep the direction that found the most with the best confidence
+      const w = await getPaddle();
+      // try straight, then sideways; keep the direction the text rules liked best (same as the original reader)
       let best = -1;
-      for (const rot of [0, 90, 270]) {
-        const r = (await w.recognize(rot ? prep(p.img, rot) : base)).data;
+      for (const rot of [0, 90, 270, 180]) {
+        const r = (await w.recognize(rot ? prep(p.img, rot) : base, {}, { text: true, blocks: true })).data;
         const f = findModelSerial(r.text), hits = (f.model ? 1 : 0) + (f.serial ? 1 : 0);
         const score = hits * 100 + (r.confidence || 0);
-        if (score > best) { best = score; found = f; }
+        if (score > best) {
+          best = score;
+          const raw = [];
+          (r.blocks || []).forEach((bl, bi) => bl.paragraphs.forEach((pa, pi) => pa.lines.forEach((ln, li) => ln.words.forEach(wd =>
+            raw.push({ t: wd.text, x0: wd.bbox.x0, y0: wd.bbox.y0, x1: wd.bbox.x1, y1: wd.bbox.y1, line: bi + "." + pi + "." + li })))));
+          const g = findFromWords(raw).found; // fills only what the text rules missed
+          found = { model: f.model || g.model, serial: f.serial || g.serial };
+          const confOf = v => { const l = (r.plines || []).find(l => l.text.toUpperCase().replace(/\s+/g, "").includes(v)); return l ? +l.mean.toFixed(3) : null; };
+          if ((!found.model || !found.serial) && r.plines) belowFill(r.plines, found);
+          found.conf = { model: found.model ? confOf(found.model) : null, serial: found.serial ? confOf(found.serial) : null };
+        }
         if (hits === 2 && r.confidence > 50) break;
         if (rot === 0 && hits && r.confidence > 70) break; // clearly the right way up
       }
     } catch (e) {}
-    found = { model: qr.model || found.model, serial: qr.serial || found.serial };
+    found = { model: qr.model || found.model, serial: qr.serial || found.serial, conf: found.conf, byCode: { model: !!qr.model, serial: !!qr.serial } };
     if ((!found.model || !found.serial) && OCRSPACE_KEY && navigator.onLine) {
       try {
         const f = findModelSerial(await ocrSpace(p.blob));
@@ -608,7 +787,12 @@
       } catch (e) {}
     }
     fixWithBarcodes(found, codes);
-    return applyFound(found);
+    for (const k of ["model", "serial"]) {
+      const c = found.conf && found.conf[k];
+      if (found[k] && !(found.byCode && found.byCode[k]) && c != null && c < 0.92) { found.dropped = { ...(found.dropped || {}), [k]: found[k] }; delete found[k]; }
+    }
+    if (found.model && found.model === found.serial) delete found.model;
+    return found;
   }
 
   // photos are too big for localStorage, so the draft keeps them in IndexedDB
