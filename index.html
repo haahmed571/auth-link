@@ -16,206 +16,285 @@
   /* Reading Model # / Serial # from photos: done on the phone first (free, works offline).
      If that misses, and a free key from https://ocr.space/ocrapi is pasted here, it tries OCR.space online. */
   const OCRSPACE_KEY = ""; // e.g. "K81234567888957"
+  /* One-tap buttons on the Work step */
+  const LABOR_AMOUNTS = [75, 85, 100, 115, 150, 225, 300]; // labor $ buttons (tech taps one)
+  /* Live label scan: if the camera hasn't read BOTH model and serial in this many seconds, it asks for a photo instead */
+  const SCAN_SECONDS = 15;
+  const NOTE_CHIPS = ["Needs part ordered", "Part in truck", "Customer approved",
+                      "Waiting on warranty approval", "Not worth repairing", "Return visit needed"];
 </script>
 <style>
-  :root { --navy:#0f2a4a; --gold:#d4a017; --bg:#f3f5f8; --card:#fff; --ink:#1b2430; --muted:#6b7686; --line:#dde2e9; }
+  :root { --navy:#0f2a4a; --gold:#d4a017; --bg:#f3f5f8; --card:#fff; --ink:#1b2430; --muted:#6b7686; --line:#dde2e9; --red:#b42318; }
   * { box-sizing: border-box; }
   body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); }
-  header { background:var(--navy); color:#fff; padding:18px 16px 14px; border-bottom:4px solid var(--gold); }
-  header h1 { margin:0; font-size:20px; }
-  .brand { display:flex; align-items:center; gap:12px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,.15); }
-  .brand img { height:46px; width:auto; background:#fff; border-radius:8px; padding:4px; }
-  .brand .co { font-weight:800; font-size:16px; color:var(--gold); }
-  .brand .contact { font-size:12px; opacity:.85; margin-top:2px; word-break:break-word; }
-  .brand a { color:#fff; text-decoration:none; }
-  header p { margin:4px 0 0; font-size:13px; opacity:.8; }
-  main { max-width:520px; margin:0 auto; padding:16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
-  .card h2 { margin:0 0 4px; font-size:15px; color:var(--navy); text-transform:uppercase; letter-spacing:.04em; }
-  .job div { display:flex; gap:10px; padding:5px 0; font-size:15px; border-bottom:1px dashed var(--line); }
-  .job div:last-child { border-bottom:0; }
-  .job b { min-width:90px; color:var(--muted); font-weight:600; }
-  label { display:block; font-weight:600; font-size:14px; margin:12px 0 6px; }
   input, textarea, select, button { font-family:inherit; }
-  input, textarea { width:100%; font-size:17px; padding:12px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); }
-  textarea { min-height:80px; resize:vertical; }
-  .req { color:#b42318; }
-  .toggle { display:flex; gap:8px; margin-top:6px; }
-  .toggle button { margin:0; padding:12px; font-size:16px; background:#fff; color:var(--navy); border:2px solid var(--line); }
-  .toggle button.on { border-color:var(--navy); background:var(--navy); color:#fff; }
-  .part { border:1px solid var(--line); border-radius:10px; padding:10px 12px 12px; margin-top:12px; background:#fafbfc; }
-  .part-head { display:flex; justify-content:space-between; align-items:center; font-weight:700; font-size:14px; color:var(--muted); }
-  .part-head button { width:auto; margin:0; padding:4px 10px; font-size:13px; background:none; color:#b42318; border:1px solid #f1c4c0; border-radius:8px; }
-  .part label { margin-top:8px; font-size:13px; }
-  .row { display:flex; gap:10px; }
-  .row > * { flex:1; min-width:0; }
-  .row > .qty { flex:0 0 80px; }
-  .line-total { text-align:right; font-size:14px; color:var(--muted); margin-top:8px; }
-  button { width:100%; font-size:17px; font-weight:700; padding:15px; border:0; border-radius:12px; margin-top:10px; cursor:pointer; }
-  .add { background:#fff; color:var(--navy); border:2px dashed var(--navy); font-size:15px; padding:12px; }
-  .totals div { display:flex; justify-content:space-between; padding:6px 0; font-size:16px; }
-  .totals .grand { border-top:2px solid var(--navy); margin-top:4px; padding-top:10px; font-weight:800; font-size:19px; color:var(--navy); }
+  button { cursor:pointer; }
+
+  /* slim header + step labels, stuck to the top together */
+  .top { position:sticky; top:0; z-index:5; background:var(--navy); color:#fff; border-bottom:3px solid var(--gold); }
+  .top .in { max-width:520px; margin:0 auto; padding:8px 16px; display:flex; align-items:center; gap:10px; }
+  .top img { height:30px; width:auto; background:#fff; border-radius:6px; padding:2px; }
+  .top h1 { margin:0; font-size:16px; flex:1; }
+  .steps { display:flex; gap:4px; }
+  .steps button { margin:0; padding:5px 8px; font-size:12px; font-weight:700; background:none; color:rgba(255,255,255,.6); border:0; border-radius:999px; }
+  .steps button.done { color:#fff; }
+  .steps button.done::before { content:"✓ "; color:var(--gold); }
+  .steps button.on { background:#fff; color:var(--navy); }
+
+  main { max-width:520px; margin:0 auto; padding:12px 16px 100px; }
+  .step[hidden] { display:none; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+  .card h2 { margin:0 0 8px; font-size:13px; color:var(--navy); text-transform:uppercase; letter-spacing:.05em; }
+  .chead { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px; }
+  .chead h2 { margin:0; }
+
+  /* job: one line, tap to open */
+  details.job { padding:10px 14px; }
+  details.job summary { font-size:14px; font-weight:600; color:var(--navy); list-style:none; display:flex; justify-content:space-between; gap:8px; }
+  details.job summary::-webkit-details-marker { display:none; }
+  details.job summary::after { content:"▾"; color:var(--muted); }
+  details.job[open] summary::after { content:"▴"; }
+  details.job summary span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .jobrows div { display:flex; gap:10px; padding:5px 0; font-size:14px; border-bottom:1px dashed var(--line); }
+  .jobrows div:last-child { border-bottom:0; }
+  .jobrows b { min-width:84px; color:var(--muted); font-weight:600; }
+  .jobrows { margin-top:8px; }
+
+  label { display:block; font-weight:600; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea { width:100%; font-size:17px; padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); }
+  textarea { min-height:70px; resize:vertical; }
+  .req { color:var(--red); }
   .money { position:relative; }
   .money span { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--muted); font-size:17px; }
   .money input { padding-left:26px; }
-  .wa { background:#25d366; color:#fff; }
-  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
-  .err { color:#b42318; font-size:14px; margin-top:10px; display:none; }
-  .chat { background:#efeae2; border-radius:10px; padding:12px; margin-top:8px; }
-  #bubble { background:#d9fdd3; border-radius:10px 0 10px 10px; padding:3px; box-shadow:0 1px .5px rgba(11,20,26,.13); margin-left:auto; max-width:94%; }
-  #preview { padding:5px 7px 5px; font-size:14.5px; line-height:1.4; color:#111b21; word-wrap:break-word; }
-  #pgrid { display:grid; gap:3px; border-radius:8px; overflow:hidden; margin-bottom:3px; }
-  #pgrid.n1 { grid-template-columns:1fr; grid-auto-rows:220px; }
-  #pgrid.n2 { grid-template-columns:1fr 1fr; grid-auto-rows:170px; }
-  #pgrid.n3 { grid-template-columns:2fr 1fr; grid-template-rows:110px 110px; }
-  #pgrid.n3 .ph:first-child { grid-row:span 2; }
+
+  /* photo buttons: camera (big) + gallery (small), side by side */
+  .pbtns { display:flex; gap:8px; }
+  .pbtns button { margin:0; padding:12px; font-size:15px; font-weight:700; border-radius:10px; }
+  .pbtns .cam { flex:1; background:var(--navy); color:#fff; border:0; }
+  .pbtns .gal { flex:0 0 auto; background:#fff; color:var(--navy); border:2px solid var(--line); }
+  .thumbs { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; margin-top:8px; }
+  .thumbs[hidden] { display:none; }
+  .thumbs .ph { aspect-ratio:1; border-radius:8px; overflow:hidden; }
   .ph { position:relative; background:#c8d1c4; }
   .ph img { width:100%; height:100%; object-fit:cover; display:block; }
-  .ph .x { position:absolute; top:6px; right:6px; width:30px; height:30px; margin:0; padding:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:15px; line-height:30px; }
-  .add:disabled { opacity:.45; cursor:default; }
+  .ph .x { position:absolute; top:4px; right:4px; width:26px; height:26px; margin:0; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:13px; line-height:26px; }
   input.found { background:#fff7d6; border-color:var(--gold); }
-  .fnote { font-size:13px; color:#8a6500; margin-top:5px; }
+  .fnote { font-size:13px; color:#8a6500; margin-top:4px; }
   .fnote:empty { display:none; }
-  .fnote button { width:auto; margin:0 0 0 6px; padding:3px 12px; font-size:13px; border-radius:8px; background:var(--navy); color:#fff; }
-  #scanStatus { font-size:13px; color:var(--muted); margin-top:10px; }
+  .fnote button { width:auto; margin:0 0 0 6px; padding:3px 12px; font-size:13px; border:0; border-radius:8px; background:var(--navy); color:#fff; }
+  #scanStatus { font-size:13px; color:var(--muted); margin-top:8px; }
+
+  /* live label scanner (full screen camera) */
+  #scanner { position:fixed; inset:0; z-index:50; background:#000; }
+  #scanner[hidden] { display:none; }
+  #scanVideo { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  #scanBox { position:absolute; left:6%; width:88%; top:20%; height:34%; border:3px solid var(--gold); border-radius:14px; box-shadow:0 0 0 9999px rgba(0,0,0,.5); transition:border-color .2s; }
+  #scanBox.hit { border-color:#25d366; }
+  #scanClose { position:absolute; top:calc(12px + env(safe-area-inset-top)); right:12px; width:44px; height:44px; margin:0; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:20px; }
+  .sbot { position:absolute; left:0; right:0; bottom:0; padding:16px 16px calc(18px + env(safe-area-inset-bottom)); color:#fff; text-align:center; }
+  #scanMsg { font-size:17px; font-weight:700; margin-bottom:6px; }
+  #scanGot { font-size:15px; min-height:20px; margin-bottom:12px; color:#d9fdd3; }
+  #scanPhoto { width:100%; margin:0; padding:14px; font-size:17px; font-weight:700; border-radius:12px; border:2px solid rgba(255,255,255,.6); background:rgba(0,0,0,.4); color:#fff; }
+  #scanPhoto.go { background:var(--gold); border-color:var(--gold); color:#111; }
+
+  /* parts: compact rows */
+  .part { border:1px solid var(--line); border-radius:10px; padding:8px; margin-bottom:8px; background:#fafbfc; }
+  .pnames { display:flex; gap:6px; margin-bottom:6px; }
+  .pnames .p-name { flex:1; min-width:0; }
+  .pnames .p-num { flex:1; min-width:0; }
+  .prow { display:flex; gap:6px; align-items:stretch; }
+  .stepper { display:flex; flex:0 0 auto; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }
+  .stepper button { width:38px; margin:0; padding:0; border:0; background:#f0f3f7; color:var(--navy); font-size:20px; font-weight:700; }
+  .stepper input { width:42px; border:0; border-radius:0; text-align:center; padding:11px 0; }
+  .prow .money { flex:1; min-width:0; }
+  .prow .rm { flex:0 0 44px; margin:0; padding:0; border:1px solid #f1c4c0; border-radius:10px; background:#fff; font-size:17px; }
+  .add { width:100%; margin:0; padding:11px; font-size:15px; font-weight:700; background:#fff; color:var(--navy); border:2px dashed var(--navy); border-radius:10px; }
+  .none { font-size:14px; color:var(--muted); margin:0 0 8px; }
+
+  /* chips (labor amounts, notes) */
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .chips button { margin:0; padding:9px 13px; font-size:15px; font-weight:600; background:#fff; color:var(--navy); border:1.5px solid var(--line); border-radius:999px; }
+  .chips button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
+  #noteChips button { font-size:14px; padding:8px 11px; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; min-width:0; }
+  .row label { margin-top:0; }
+  .calc { text-align:right; font-size:14px; color:var(--muted); margin-top:6px; }
+
+  /* step 3: WhatsApp look */
+  .hint { font-size:13px; color:var(--muted); margin:8px 0; text-align:center; }
+  .chat { background:#efeae2; border-radius:12px; padding:12px; }
+  #bubble { background:#d9fdd3; border-radius:10px 0 10px 10px; padding:3px; box-shadow:0 1px .5px rgba(11,20,26,.13); margin-left:auto; max-width:94%; }
+  #preview { padding:5px 7px; font-size:14.5px; line-height:1.4; color:#111b21; word-wrap:break-word; }
+  #pgrid { display:grid; gap:3px; border-radius:8px; overflow:hidden; margin-bottom:3px; grid-template-columns:1fr 1fr; grid-auto-rows:130px; }
+  #pgrid[hidden] { display:none; }
+  #pgrid.n1 { grid-template-columns:1fr; grid-auto-rows:220px; }
+  #pgrid.n3 .ph:first-child { grid-column:span 2; }
+  #pgrid .x { display:none; }
+  .ph img { cursor:zoom-in; }
+
+  /* full-screen photo viewer */
+  #viewer { position:fixed; inset:0; z-index:60; background:#000; display:flex; flex-direction:column; }
+  #viewer[hidden] { display:none; }
+  #viewImg { flex:1; min-height:0; width:100%; object-fit:contain; }
+  #viewClose { position:absolute; top:calc(12px + env(safe-area-inset-top)); right:12px; width:44px; height:44px; margin:0; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:20px; }
+  .vbot { display:flex; gap:8px; padding:12px 16px calc(14px + env(safe-area-inset-bottom)); }
+  .vbot button { margin:0; padding:14px; font-size:16px; font-weight:700; border-radius:12px; border:0; }
+  #viewDel { flex:1; background:#3a1512; color:#ffb4ab; }
+
+  /* model / serial with a Copy button */
+  .copyrow { display:flex; gap:6px; }
+  .copyrow input { flex:1; min-width:0; }
+  .copy { flex:0 0 100px; margin:0; padding:0 8px; font-size:14px; font-weight:700; border:1.5px solid var(--line); border-radius:10px; background:#fff; color:var(--navy); }
+  .copy:disabled { opacity:.4; }
+  .copy.ok { background:#e7f8ec; border-color:#25d366; color:#127a3a; }
+
+  /* small Clear on each card */
+  .cclear { margin:0; padding:4px 11px; font-size:13px; font-weight:600; background:none; color:var(--red); border:1px solid #f1c4c0; border-radius:8px; }
+  .cclear[hidden] { display:inline-block; visibility:hidden; } /* keeps its space: nothing jumps when it appears */
+
+  /* flashlight on the scan screen */
+  #scanTorch { position:absolute; top:calc(12px + env(safe-area-inset-top)); left:12px; height:44px; margin:0; padding:0 14px; border:0; border-radius:22px; background:rgba(0,0,0,.6); color:#fff; font-size:15px; font-weight:700; }
+  #scanTorch[hidden] { display:none; }
+  #scanTorch.on { background:var(--gold); color:#111; }
   #preview pre { font-family:ui-monospace,Menlo,monospace; font-size:13px; margin:2px 0; white-space:pre; overflow-x:auto; }
   #preview code { font-family:ui-monospace,Menlo,monospace; font-size:13px; background:rgba(0,0,0,.06); padding:0 4px; border-radius:4px; }
   #preview .q { display:block; border-left:3px solid #6b7686; padding-left:8px; color:#3b4a54; }
-  /* ---- 3 steps: tabs on top, Back / Next bar fixed at the bottom ---- */
-  header { padding:12px 16px 10px; }
-  .brand { padding-bottom:10px; margin-bottom:8px; }
-  .brand img { height:38px; }
-  header h1 { font-size:17px; }
-  header p { display:none; }
-  .steps { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line); }
-  .steps .in { max-width:520px; margin:0 auto; display:flex; gap:6px; padding:10px 16px; }
-  .steps button { flex:1; margin:0; padding:9px 4px; font-size:14px; font-weight:700; background:#fff; color:var(--muted); border:1px solid var(--line); border-radius:999px; }
-  .steps button.done { color:var(--navy); border-color:var(--navy); }
-  .steps button.done::before { content:"✓ "; }
-  .steps button.on { background:var(--navy); color:#fff; border-color:var(--navy); }
-  .step[hidden] { display:none; }
-  main { padding-bottom:110px; }
+  .clear { display:block; margin:16px auto 0; padding:8px 14px; font-size:14px; background:none; color:var(--red); border:0; text-decoration:underline; }
+
+  /* bottom bar: Back · Total · Next/Send (always visible) */
   .navbar { position:fixed; left:0; right:0; bottom:0; z-index:5; background:#fff; border-top:1px solid var(--line); box-shadow:0 -2px 10px rgba(15,42,74,.06); }
-  .navbar .in { max-width:520px; margin:0 auto; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); }
-  .navbar .btns { display:flex; gap:10px; }
-  .navbar button { margin:0; padding:14px; }
-  #navBack { flex:0 0 100px; background:#fff; color:var(--navy); border:2px solid var(--line); }
-  #navNext { flex:1; background:var(--navy); color:#fff; }
-  #btnSend { flex:1; }
-  #pthumbs { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:10px; }
-  #pthumbs .ph { aspect-ratio:1; border-radius:10px; overflow:hidden; }
-  .chead { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:4px; }
-  .chead h2 { margin:0; }
-  .cclear { width:auto; margin:0; padding:5px 12px; font-size:13px; font-weight:600; background:none; color:#b42318; border:1px solid #f1c4c0; border-radius:8px; }
-  .clear { background:none; color:#b42318; border:1px solid #f1c4c0; font-size:14px; padding:10px; margin-top:6px; }
-  .navbar .err { margin:0 0 8px; text-align:center; }
+  .navbar .in { max-width:520px; margin:0 auto; padding:8px 16px calc(8px + env(safe-area-inset-bottom)); }
+  .navbar .btns { display:flex; gap:10px; align-items:center; }
+  .navbar button { margin:0; padding:14px; font-size:17px; font-weight:700; border-radius:12px; }
+  #navBack { flex:0 0 80px; background:#fff; color:var(--navy); border:2px solid var(--line); }
+  .tot { flex:1; text-align:center; line-height:1.1; }
+  .tot small { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .tot b { font-size:19px; color:var(--navy); }
+  #navNext, #btnSend { flex:0 0 130px; border:0; }
+  #navNext { background:var(--navy); color:#fff; }
+  #btnSend { background:#25d366; color:#fff; }
+  .err { color:var(--red); font-size:14px; margin:0 0 6px; text-align:center; display:none; }
 </style>
 </head>
 <body>
 <div id="offline" hidden style="background:#b42318;color:#fff;text-align:center;font-size:13px;padding:6px">No signal: fill it out now. WhatsApp will send it when signal comes back.</div>
-<header>
-  <div class="brand">
-    <img src="logo.png" alt="OnSpot Appliance Repair">
-    <div>
-      <div class="co">OnSpot Appliance Repair LLC</div>
-      <div class="contact"><a href="tel:+15712346772">(571) 234-6772</a> · <a href="mailto:services@onspotappliancerepair.com">services@onspotappliancerepair.com</a></div>
-    </div>
-  </div>
-  <h1>Repair Authorization</h1>
-  <p>Technician fills this out and sends it to the office</p>
-</header>
-<nav class="steps"><div class="in">
-  <button type="button" data-go="1">1 Unit</button>
-  <button type="button" data-go="2">2 Work</button>
-  <button type="button" data-go="3">3 Send</button>
-</div></nav>
+<div class="top"><div class="in">
+  <img src="logo.png" alt="OnSpot">
+  <h1>Repair Report</h1>
+  <nav class="steps">
+    <button type="button" data-go="1">Unit</button>
+    <button type="button" data-go="2">Work</button>
+    <button type="button" data-go="3">Send</button>
+  </nav>
+</div></div>
 <main>
  <section class="step" id="step1">
-  <div class="card job" id="job"></div>
+  <details class="card job" id="job"><summary><span id="jobSum">Job details</span></summary><div class="jobrows" id="jobRows"></div></details>
 
   <div class="card">
-    <h2>Photos</h2>
-    <div class="hint">Up to 3 — start with the model/serial tag, then the problem, the whole unit.</div>
-    <input type="file" id="photoIn" accept="image/*" multiple hidden>
-    <div id="pthumbs" hidden></div>
-    <button type="button" class="add" id="addPhoto">📷 Add photo</button>
-  </div>
-
-  <div class="card">
-    <h2>Unit</h2>
+    <h2>Model &amp; serial</h2>
+    <input type="file" id="labelCam" accept="image/*" capture="environment" hidden>
+    <input type="file" id="labelPick" accept="image/*" multiple hidden>
+    <div class="pbtns">
+      <button type="button" class="cam" id="labelCamBtn">🔍 Scan label</button>
+      <button type="button" class="gal" id="labelPickBtn">🖼 Gallery</button>
+    </div>
+    <div class="thumbs" id="labelThumbs" hidden></div>
+    <div id="scanStatus" hidden></div>
     <label for="model">Model # <span class="req">*</span></label>
-    <input id="model" autocomplete="off" autocapitalize="characters" placeholder="Model number">
+    <div class="copyrow"><input id="model" autocomplete="off" autocapitalize="characters" placeholder="Scan the label or type it"><button type="button" class="copy" data-copy="model" aria-label="Copy model number">Copy</button></div>
     <div class="fnote" id="modelNote"></div>
     <label for="serial">Serial # <span class="req">*</span></label>
-    <input id="serial" autocomplete="off" autocapitalize="characters" placeholder="Serial number">
+    <div class="copyrow"><input id="serial" autocomplete="off" autocapitalize="characters" placeholder="Scan the label or type it"><button type="button" class="copy" data-copy="serial" aria-label="Copy serial number">Copy</button></div>
     <div class="fnote" id="serialNote"></div>
-    <div id="scanStatus" hidden></div>
-    <div class="hint">Tip: add a photo of the rating label above and these fill in by themselves.</div>
   </div>
  </section>
 
  <section class="step" id="step2" hidden>
   <div class="card">
-    <h2>Parts</h2>
-    <label>Parts needed?</label>
-    <div class="toggle">
-      <button type="button" id="partsYes">Yes</button>
-      <button type="button" id="partsNo" class="on">No</button>
+    <h2>Work photos</h2>
+    <input type="file" id="workCam" accept="image/*" capture="environment" hidden>
+    <input type="file" id="workPick" accept="image/*" multiple hidden>
+    <div class="pbtns">
+      <button type="button" class="cam" id="workCamBtn">📷 Problem / unit</button>
+      <button type="button" class="gal" id="workPickBtn">🖼 Gallery</button>
     </div>
-    <div id="partsBox" hidden>
-      <div id="partsList"></div>
-      <button type="button" class="add" id="addPart">+ Add another part</button>
-    </div>
+    <div class="thumbs" id="workThumbs" hidden></div>
   </div>
 
   <div class="card">
-    <h2>Amounts</h2>
-    <label for="labor">Labor amount</label>
-    <div class="money"><span>$</span><input id="labor" inputmode="decimal" placeholder="0.00"></div>
-    <div class="totals" style="margin-top:12px">
-      <div><span>Labor</span><span id="tLabor">$0.00</span></div>
-      <div><span>Parts</span><span id="tParts">$0.00</span></div>
-      <div class="grand"><span>Total</span><span id="tTotal">$0.00</span></div>
+    <h2>Parts</h2>
+    <div id="partsList"></div>
+    <p class="none" id="noParts">No parts needed.</p>
+    <button type="button" class="add" id="addPart">+ Add part</button>
+  </div>
+
+  <div class="card">
+    <h2>Labor</h2>
+    <div>
+      <div class="chips" id="laborChips" style="margin-bottom:0"></div>
+      <input type="hidden" id="labor">
     </div>
   </div>
 
   <div class="card">
     <h2>Notes</h2>
-    <textarea id="notes" placeholder="Problem found, diagnosis, anything the office should know"></textarea>
+    <div class="chips" id="noteChips"></div>
+    <textarea id="notes" placeholder="Anything else (tap 🎤 on the keyboard to talk)"></textarea>
   </div>
  </section>
 
  <section class="step" id="step3" hidden>
-  <div class="card">
-    <h2>Check &amp; send</h2>
-    <div class="hint" style="margin-bottom:8px">This is what the office will get. Tap a step above to change anything.</div>
-    <div class="chat"><div id="bubble"><div id="pgrid" hidden></div><div id="preview"></div></div></div>
-  </div>
-  <div class="hint" style="text-align:center">Tap Send, pick WhatsApp or Messages, then the person or group.</div>
-  <div class="hint" id="pasteHint" hidden style="text-align:center">If the text doesn't show with the photos, long-press the message box and tap Paste.</div>
+  <div class="chat"><div id="bubble"><div id="pgrid" hidden></div><div id="preview"></div></div></div>
+  <div class="hint">Tap Send, pick WhatsApp or Messages, then the person or group.</div>
+  <div class="hint" id="pasteHint" hidden>If the text doesn't show with the photos, long-press the message box and tap Paste.</div>
  </section>
-  <button type="button" class="clear" id="btnClear">🗑 Clear report</button>
+  <button type="button" class="clear" id="btnClear">🗑 Clear whole report</button>
 </main>
+
+<div id="scanner" hidden>
+  <video id="scanVideo" playsinline muted autoplay></video>
+  <div id="scanBox"></div>
+  <button type="button" id="scanClose" aria-label="Close scanner">✕</button>
+  <button type="button" id="scanTorch" hidden>🔦 Light</button>
+  <div class="sbot">
+    <div id="scanMsg">Fit the model/serial label in the box</div>
+    <div id="scanGot"></div>
+    <button type="button" id="scanPhoto">📷 Take photo instead</button>
+  </div>
+</div>
+
+<div id="viewer" hidden>
+  <img id="viewImg" alt="Photo">
+  <button type="button" id="viewClose" aria-label="Close photo">✕</button>
+  <div class="vbot">
+    <button type="button" id="viewDel">🗑 Delete photo</button>
+  </div>
+</div>
 
 <div class="navbar"><div class="in">
   <div class="err" id="err"></div>
   <div class="btns">
     <button type="button" id="navBack">Back</button>
+    <div class="tot"><small>Total</small><b id="tTotal">$0.00</b></div>
     <button type="button" id="navNext">Next</button>
-    <button class="wa" id="btnSend" hidden>Send report</button>
+    <button type="button" id="btnSend" hidden>Send</button>
   </div>
 </div></div>
 
 <template id="partTpl">
   <div class="part">
-    <div class="part-head"><span class="pn">Part 1</span><button type="button" class="rm">Remove</button></div>
-    <label>Part name / part #</label>
-    <input class="p-name" placeholder="e.g. Defrost heater  WR51X10055">
-    <div class="row">
-      <div class="qty"><label>Qty</label><input class="p-qty" inputmode="numeric" value="1"></div>
-      <div><label>Cost each</label><div class="money"><span>$</span><input class="p-cost" inputmode="decimal" placeholder="0.00"></div></div>
+    <div class="pnames">
+      <input class="p-name" placeholder="Part name" aria-label="Part name">
+      <input class="p-num" placeholder="Part #" autocapitalize="characters" autocomplete="off" aria-label="Part number">
     </div>
-    <div class="line-total">Line total: <b class="p-total">$0.00</b></div>
+    <div class="prow">
+      <div class="stepper"><button type="button" class="minus" aria-label="Less">−</button><input class="p-qty" inputmode="numeric" value="1" aria-label="Quantity"><button type="button" class="plus" aria-label="More">+</button></div>
+      <div class="money"><span>$</span><input class="p-cost" inputmode="decimal" placeholder="Cost (opt.)" aria-label="Cost each"></div>
+      <button type="button" class="rm" aria-label="Remove part">🗑</button>
+    </div>
   </div>
 </template>
 
@@ -231,47 +310,60 @@
   const num = s => { const n = parseFloat(String(s).replace(/[^0-9.]/g, "")); return isFinite(n) ? n : 0; };
   const money = n => "$" + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
+  // ---- job: one-line summary, tap to see all ----
   const shown = FIELDS.filter(([k]) => q.get(k));
   if (shown.length) {
     for (const [k, label] of shown) {
       const d = document.createElement("div");
       const b = document.createElement("b"); b.textContent = label;
       const s = document.createElement("span"); s.textContent = q.get(k);
-      d.append(b, s); $("job").append(d);
+      d.append(b, s); $("jobRows").append(d);
     }
+    $("jobSum").textContent = [q.get("customer"), q.get("appliance"), q.get("job") && "WO " + q.get("job")].filter(Boolean).join(" · ") || "Job details";
   } else {
-    $("job").innerHTML = '<span class="hint">No job details in this link.</span>';
+    $("jobSum").textContent = "No job details in this link";
   }
 
-  // ---- parts ----
-  let partsNeeded = false;
-  function setParts(on) {
-    partsNeeded = on;
-    $("partsYes").classList.toggle("on", on);
-    $("partsNo").classList.toggle("on", !on);
-    $("partsBox").hidden = !on;
-    if (on && !$("partsList").children.length) addPart();
-    refresh();
-  }
-  function addPart() {
+  // ---- parts (cost optional) ----
+  function addPart(focus = true) {
     const el = $("partTpl").content.firstElementChild.cloneNode(true);
-    el.querySelector(".rm").onclick = () => { el.remove(); if (!$("partsList").children.length) setParts(false); refresh(); };
+    const qty = el.querySelector(".p-qty");
+    el.querySelector(".minus").onclick = () => { qty.value = Math.max(1, (num(qty.value) || 1) - 1); refresh(); save(); };
+    el.querySelector(".plus").onclick = () => { qty.value = (num(qty.value) || 0) + 1; refresh(); save(); };
+    el.querySelector(".rm").onclick = () => { el.remove(); refresh(); save(); };
     el.querySelectorAll("input").forEach(i => i.addEventListener("input", refresh));
     $("partsList").append(el);
     refresh();
-    el.querySelector(".p-name").focus();
+    if (focus) el.querySelector(".p-name").focus();
+    return el;
   }
   function parts() {
-    if (!partsNeeded) return [];
     return [...$("partsList").children].map(el => {
       const qty = num(el.querySelector(".p-qty").value) || 1;
-      const cost = num(el.querySelector(".p-cost").value);
-      return { el, name: el.querySelector(".p-name").value.trim(), qty, cost, total: qty * cost };
+      const costTxt = el.querySelector(".p-cost").value.trim();
+      const cost = num(costTxt), priced = costTxt !== "";
+      return { el, name: el.querySelector(".p-name").value.trim(), pn: el.querySelector(".p-num").value.trim(), qty, cost, priced, total: priced ? qty * cost : 0 };
     });
   }
-  $("partsYes").onclick = () => setParts(true);
-  $("partsNo").onclick = () => setParts(false);
-  $("addPart").onclick = addPart;
+  $("addPart").onclick = () => addPart();
+
+  // ---- labor: one tap on an amount (tap again to unselect) ----
+  const laborTotal = () => num(val("labor"));
+
+  function makeChips(box, items, text, onTap) {
+    items.forEach(it => {
+      const b = document.createElement("button"); b.type = "button"; b.textContent = text(it); b.dataset.v = it;
+      b.onclick = () => { onTap(it); refresh(); save(); };
+      $(box).append(b);
+    });
+  }
+  makeChips("laborChips", LABOR_AMOUNTS, a => "$" + a, a => { $("labor").value = num(val("labor")) === a ? "" : a; });
+  // note chips: tap adds the line, tap again takes it out
+  const noteLines = () => $("notes").value.split("\n");
+  makeChips("noteChips", NOTE_CHIPS, t => t, t => {
+    const lines = noteLines();
+    $("notes").value = lines.includes(t) ? lines.filter(l => l !== t).join("\n") : [...lines.filter(l => l.trim()), t].join("\n");
+  });
 
   // ---- message ----
   // Builds the message. fmt "wa" = WhatsApp formatting (*bold*, _italic_, ```mono```), "sms" = plain text.
@@ -283,8 +375,9 @@
     const I = t => wa ? `_${t}_` : t;          // italic
     const C = t => wa ? `\`${t}\`` : t;        // inline code
     const ps = parts();
-    const labor = num(val("labor"));
+    const labor = laborTotal();
     const partsTotal = ps.reduce((s, p) => s + p.total, 0);
+    const tbd = ps.some(p => !p.priced);
     const total = labor + partsTotal;
     const g = k => q.get(k);
     const L = [];
@@ -301,15 +394,16 @@
     L.push("");
 
     L.push(`🔌 ${B("APPLIANCE")}${g("appliance") ? "  " + g("appliance") : ""}`);
-    L.push(`Model:  ${C(val("model") || "—")}`);
-    L.push(`Serial:  ${C(val("serial") || "—")}`);
+    L.push(`Model:  ${B(val("model") || "—")}`);
+    L.push(`Serial:  ${B(val("serial") || "—")}`);
     L.push("");
 
     if (ps.length) {
       L.push(`🔩 ${B("PARTS NEEDED")} (${ps.length})`);
       ps.forEach((p, i) => {
-        L.push(`${KEYCAP[i] || (i + 1) + "."} ${B(p.name || "Part")}`);
-        L.push(`      ${p.qty} × ${money(p.cost)} = ${B(money(p.total))}`);
+        const label = p.name && p.pn ? `${B(p.name)}  #${p.pn}` : B(p.name || p.pn || "Part");
+        L.push(`${KEYCAP[i] || (i + 1) + "."} ${label}`);
+        L.push(p.priced ? `      ${p.qty} × ${money(p.cost)} = ${B(money(p.total))}` : `      Qty ${p.qty}  —  ${I("price TBD")}`);
       });
     } else {
       L.push(`🔩 ${B("PARTS NEEDED")}  None`);
@@ -317,7 +411,7 @@
     L.push("");
 
     L.push(`💵 ${B("COST BREAKDOWN")}`);
-    const rows = [["Labor", money(labor)], ["Parts", money(partsTotal)]];
+    const rows = [["Labor", money(labor)], ["Parts", money(partsTotal) + (tbd ? " + TBD" : "")]];
     if (wa) {
       const w = Math.max(...rows.map(r => r[1].length));
       L.push("```");
@@ -326,16 +420,16 @@
     } else {
       rows.forEach(([a, b]) => L.push(`${a}: ${b}`));
     }
-    L.push(`✅ ${B("TOTAL: " + money(total))}`);
+    L.push(`✅ ${B("TOTAL: " + money(total) + (tbd ? " + parts TBD" : ""))}`);
 
     if (val("notes")) {
       L.push("");
       L.push(`📝 ${B("NOTES")}`);
-      val("notes").split("\n").forEach(n => L.push(wa ? `> ${n}` : n));
+      val("notes").split("\n").filter(n => n.trim()).forEach(n => L.push(n));
     }
     L.push(LINE);
     L.push(I("Please review and approve 🙏"));
-    return { text: L.join("\n"), labor, partsTotal, ps };
+    return { text: L.join("\n"), labor, partsTotal, ps, tbd };
   }
 
   // Shows the preview the way WhatsApp will display it
@@ -360,14 +454,13 @@
 
   function refresh() {
     const m = message();
-    m.ps.forEach((p, i) => {
-      p.el.querySelector(".pn").textContent = `Part ${i + 1}`;
-      p.el.querySelector(".p-total").textContent = money(p.total);
-    });
-    $("tLabor").textContent = money(m.labor);
-    $("tParts").textContent = money(m.partsTotal);
-    $("tTotal").textContent = money(m.labor + m.partsTotal);
+    $("tTotal").textContent = money(m.labor + m.partsTotal) + (m.tbd ? "+" : "");
+    $("noParts").hidden = m.ps.length > 0;
+    $("addPart").textContent = m.ps.length ? "+ Add another part" : "+ Add part";
     $("preview").innerHTML = renderWA(m.text);
+    $("laborChips").querySelectorAll("button").forEach(b => b.classList.toggle("on", val("labor") !== "" && num(val("labor")) === +b.dataset.v));
+    const nl = noteLines();
+    $("noteChips").querySelectorAll("button").forEach(b => b.classList.toggle("on", nl.includes(b.dataset.v)));
     if (typeof markSteps === "function") markSteps();
     if (typeof updateCardClears === "function") updateCardClears();
   }
@@ -378,9 +471,9 @@
     let msg = "", step = 0, field = null;
     if (!val("model")) { msg = "Please enter the model number."; step = 1; field = $("model"); }
     else if (!val("serial")) { msg = "Please enter the serial number."; step = 1; field = $("serial"); }
-    else if (parts().some(p => !p.name)) {
-      msg = "Please enter a name for each part (or remove it)."; step = 2;
-      field = [...document.querySelectorAll(".p-name")].find(i => !i.value.trim());
+    else if (parts().some(p => !p.name && !p.pn)) {
+      msg = "Each part needs a name or a part # (or remove it)."; step = 2;
+      field = parts().find(p => !p.name && !p.pn).el.querySelector(".p-name");
     }
     if (step) goStep(step);
     $("err").textContent = msg;
@@ -392,7 +485,7 @@
   // ---- steps: 1 Unit, 2 Work, 3 Send ----
   var curStep = 1;
   function markSteps() {
-    const done = { 1: !!(val("model") && val("serial")), 2: !!(val("labor") || parts().length), 3: false };
+    const done = { 1: !!(val("model") && val("serial")), 2: !!(laborTotal() || parts().length), 3: false };
     document.querySelectorAll(".steps button").forEach(b => {
       const n = +b.dataset.go;
       b.classList.toggle("on", n === curStep);
@@ -409,8 +502,10 @@
     markSteps();
     window.scrollTo(0, 0);
   }
-  document.querySelectorAll(".steps button").forEach(b => b.onclick = () => goStep(+b.dataset.go));
-  $("navNext").onclick = () => goStep(Math.min(3, curStep + 1));
+  // going to Send (Next or the tab) checks everything first; on a problem it jumps to the empty field instead
+  const tryStep = n => { if (n === 3 && !ok()) return; goStep(n); };
+  document.querySelectorAll(".steps button").forEach(b => b.onclick = () => tryStep(+b.dataset.go));
+  $("navNext").onclick = () => tryStep(Math.min(3, curStep + 1));
   $("navBack").onclick = () => goStep(Math.max(1, curStep - 1));
   document.addEventListener("input", markSteps);
   document.addEventListener("click", () => setTimeout(markSteps));
@@ -424,30 +519,34 @@
   const KEY = "auth-draft:" + location.search;
   const save = () => { try {
     localStorage.setItem(KEY, JSON.stringify({
-      model: val("model"), serial: val("serial"), labor: val("labor"), notes: val("notes"), on: partsNeeded,
-      parts: parts().map(p => [p.el.querySelector(".p-name").value, p.el.querySelector(".p-qty").value, p.el.querySelector(".p-cost").value])
+      model: val("model"), serial: val("serial"), notes: val("notes"),
+      labor: val("labor"),
+      parts: parts().map(p => [p.el.querySelector(".p-name").value, p.el.querySelector(".p-qty").value, p.el.querySelector(".p-cost").value, p.el.querySelector(".p-num").value])
     }));
   } catch (e) {} };
   try {
     const d = JSON.parse(localStorage.getItem(KEY) || "null");
     if (d) {
-      ["model", "serial", "labor", "notes"].forEach(k => $(k).value = d[k] || "");
-      if (d.on) { setParts(true); $("partsList").innerHTML = ""; d.parts.forEach(([n, q, c]) => {
-        addPart(); const el = $("partsList").lastElementChild;
-        el.querySelector(".p-name").value = n; el.querySelector(".p-qty").value = q; el.querySelector(".p-cost").value = c; }); }
+      ["model", "serial", "notes", "labor"].forEach(k => $(k).value = d[k] || "");
+      // older drafts had a Yes/No parts switch ("on"); parts were only saved when it was Yes
+      if (d.on !== false) (d.parts || []).forEach(([n, qn, c, pn]) => {
+        const el = addPart(false);
+        el.querySelector(".p-name").value = n; el.querySelector(".p-qty").value = qn; el.querySelector(".p-cost").value = c;
+        el.querySelector(".p-num").value = pn || ""; });
       refresh();
     }
   } catch (e) {}
   document.addEventListener("input", save); document.addEventListener("click", () => setTimeout(save, 0));
 
-  // ---- photos (1-3) ----
-  const MAX_PHOTOS = 3;
-  let photos = []; // { blob, url, img }
+  // ---- photos: "label" ones (model/serial tag, read automatically) and "work" ones (problem, unit, parts). No limit. ----
+  let photos = []; // { blob, url, img, kind }
   const loadImg = async src => { const i = new Image(); i.src = src; await i.decode(); return i; };
-  async function addBlob(blob) {
+  async function addBlob(blob, kind = "work") {
     const url = URL.createObjectURL(blob);
-    photos.push({ blob, url, img: await loadImg(url) });
+    photos.push({ blob, url, img: await loadImg(url), kind });
   }
+  // label photos first in the report, then the work photos
+  const ordered = () => [...photos.filter(p => p.kind === "label"), ...photos.filter(p => p.kind !== "label")];
   // shrink phone photos (3-5 MB) to ~300 KB so they send fast on weak signal
   async function shrink(file) {
     const u = URL.createObjectURL(file);
@@ -460,41 +559,50 @@
       return await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
     } finally { URL.revokeObjectURL(u); }
   }
+  function thumb(p, n) {
+    const d = document.createElement("div"); d.className = "ph";
+    const im = document.createElement("img"); im.src = p.url; im.alt = `Photo ${n}`;
+    const x = document.createElement("button"); x.type = "button"; x.className = "x"; x.textContent = "✕";
+    x.setAttribute("aria-label", `Remove photo ${n}`);
+    x.onclick = () => { URL.revokeObjectURL(p.url); photos.splice(photos.indexOf(p), 1); drawPhotos(); savePhotos(); };
+    im.onclick = () => openViewer(p);
+    d.append(im, x);
+    return d;
+  }
   function drawPhotos() {
-    const g = $("pgrid"), t = $("pthumbs");
-    g.innerHTML = ""; g.className = "n" + photos.length; g.hidden = !photos.length;
-    t.innerHTML = ""; t.hidden = !photos.length;
-    photos.forEach((p, i) => {
-      const d = document.createElement("div"); d.className = "ph";
-      const im = document.createElement("img"); im.src = p.url; im.alt = `Photo ${i + 1}`;
-      const x = document.createElement("button"); x.type = "button"; x.className = "x"; x.textContent = "✕";
-      x.setAttribute("aria-label", `Remove photo ${i + 1}`);
-      x.onclick = () => { URL.revokeObjectURL(p.url); photos.splice(i, 1); drawPhotos(); savePhotos(); };
-      d.append(im, x); g.append(d);
-      t.append(d.cloneNode(true)); t.lastChild.querySelector(".x").onclick = x.onclick; // same photo on step 1
-    });
-    const full = photos.length >= MAX_PHOTOS;
-    $("addPhoto").disabled = full;
-    $("addPhoto").textContent = full ? "3 photos added (max)" : photos.length ? "📷 Add another photo" : "📷 Add photo";
+    const all = ordered(), g = $("pgrid");
+    g.innerHTML = ""; g.className = all.length <= 3 ? "n" + all.length : ""; g.hidden = !all.length;
+    all.forEach((p, i) => g.append(thumb(p, i + 1)));
+    for (const kind of ["label", "work"]) {
+      const t = $(kind + "Thumbs"), mine = all.filter(p => p.kind === kind);
+      t.innerHTML = ""; t.hidden = !mine.length;
+      mine.forEach((p, i) => t.append(thumb(p, i + 1)));
+    }
+    $("labelCamBtn").textContent = photos.some(p => p.kind === "label") ? "🔍 Scan again" : "🔍 Scan label";
+    $("workCamBtn").textContent = photos.some(p => p.kind === "work") ? "📷 Add another" : "📷 Problem / unit";
     $("pasteHint").hidden = !photos.length;
     if (typeof updateCardClears === "function") updateCardClears();
   }
-  $("addPhoto").onclick = () => $("photoIn").click();
-  $("photoIn").onchange = async e => {
-    const files = [...e.target.files].slice(0, MAX_PHOTOS - photos.length);
+  async function takePhotos(e, kind) {
+    const files = [...e.target.files];
     e.target.value = "";
     for (const f of files) {
       try {
         const b = await shrink(f);
         if (b) {
-          await addBlob(b);
-          if (!(val("model") && val("serial"))) scanCopy(f).then(img => queueScan({ img, blob: b })).catch(() => {});
+          await addBlob(b, kind);
+          if (kind === "label" && !(val("model") && val("serial"))) scanCopy(f).then(img => queueScan({ img, blob: b })).catch(() => {});
         }
       }
       catch (err) { alert("Couldn't read that photo. Try taking it again."); }
     }
     drawPhotos(); savePhotos();
-  };
+  }
+  for (const kind of ["label", "work"]) {
+    $(kind + "CamBtn").onclick = () => $(kind + "Cam").click();
+    $(kind + "PickBtn").onclick = () => $(kind + "Pick").click();
+    $(kind + "Cam").onchange = $(kind + "Pick").onchange = e => takePhotos(e, kind);
+  }
 
   // ---- read Model # / Serial # from a photo (no AI) ----
   // 1) barcodes (ZXing / phone's BarcodeDetector)  2) text OCR on the phone (Tesseract.js)
@@ -526,13 +634,27 @@
   }
 
   // PaddleOCR (PP-OCRv4 via onnxruntime-web), wrapped to look like the Tesseract worker the reader expects
-  let paddle;
-  function getPaddle() {
-    return paddle ||= loadScript("vendor/paddle/paddle-ocr.js").then(async () => {
+  // the text reader runs in a background worker so taps still work while it reads; on-page if the phone can't
+  function paddleInWorker() {
+    if (!window.Worker || !window.OffscreenCanvas) return Promise.reject(new Error("no worker"));
+    const w = new Worker("vendor/paddle/ocr-worker.js"), wait = new Map(); let n = 0;
+    w.onmessage = e => { const r = wait.get(e.data.id); if (!r) return; wait.delete(e.data.id); e.data.ok ? r[0](e.data.res) : r[1](new Error(e.data.err)); };
+    w.onerror = e => { e.preventDefault(); wait.forEach(r => r[1](new Error("reader worker failed"))); wait.clear(); };
+    const call = (op, img) => new Promise((res, rej) => { const id = ++n; wait.set(id, [res, rej]); w.postMessage({ id, op, img }); });
+    return call("load").then(() => ({ detect: img => call("read", img) }))
+      .catch(e => { w.terminate(); throw e; });
+  }
+  function paddleOnPage() {
+    return loadScript("vendor/paddle/paddle-ocr.js").then(() => {
       const { Ocr, ort } = window.PaddleOCR, abs = f => new URL("vendor/paddle/" + f, location.href).href;
       ort.env.wasm.wasmPaths = abs(""); ort.env.wasm.numThreads = 1;
-      const ocr = await Ocr.create({ models: { detectionPath: abs("ch_PP-OCRv4_det_infer.onnx"),
+      return Ocr.create({ models: { detectionPath: abs("ch_PP-OCRv4_det_infer.onnx"),
         recognitionPath: abs("ch_PP-OCRv4_rec_infer.onnx"), dictionaryPath: abs("ppocr_keys_v1.txt") } });
+    });
+  }
+  let paddle;
+  function getPaddle() {
+    return paddle ||= paddleInWorker().catch(() => paddleOnPage()).then(ocr => {
       return {
         async recognize(canvas) {
           const id = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
@@ -580,8 +702,8 @@
       return ZXingWASM;
     }).catch(e => { zxw = null; throw e; });
   }
-  async function readBarcodes(canvas, color) {
-    const out = new Set();
+  async function readBarcodes(canvas, color, fast) {
+    const out = new Set(); let wasmOk = false;
     try {
       const Z = await getZxing();
       for (const c of [color, canvas]) {
@@ -590,8 +712,9 @@
         (await Z.readBarcodes(img, { tryHarder: true, tryRotate: true, tryDownscale: true, maxNumberOfSymbols: 8 }))
           .forEach(r => r.isValid !== false && r.text && out.add(r.text.trim()));
       }
+      wasmOk = true;
     } catch (e) {}
-    (await readBarcodesOld(canvas)).forEach(t => out.add(t.trim()));
+    if (!(fast && wasmOk)) (await readBarcodesOld(canvas)).forEach(t => out.add(t.trim()));
     return [...out];
   }
   async function readBarcodesOld(canvas) {
@@ -844,16 +967,17 @@
     }
   }
 
-  async function readLabel(p) {
+  // opt.rots: which turns to try (live scan only tries straight); opt.live: no online OCR
+  async function readLabel(p, opt = {}) {
     const base = prep(p.img);
-    const codes = await readBarcodes(base, p.img.getContext ? p.img : null);
+    const codes = await readBarcodes(base, opt.live ? null : (p.img.getContext ? p.img : null), opt.live);
     const qr = fromCodes(codes);
     let found = {};
     if (!(qr.model && qr.serial)) try {
       const w = await getPaddle();
       // try straight, then sideways; keep the direction the text rules liked best (same as the original reader)
       let best = -1;
-      for (const rot of [0, 90, 270, 180]) {
+      for (const rot of opt.rots || [0, 90, 270, 180]) {
         const r = (await w.recognize(rot ? prep(p.img, rot) : base, {}, { text: true, blocks: true })).data;
         const f = findModelSerial(r.text), hits = (f.model ? 1 : 0) + (f.serial ? 1 : 0);
         const score = hits * 100 + (r.confidence || 0);
@@ -882,7 +1006,7 @@
       } catch (e2) {}
     }
     found = { model: qr.model || found.model, serial: qr.serial || found.serial, conf: found.conf, byCode: { model: !!qr.model, serial: !!qr.serial } };
-    if ((!found.model || !found.serial) && OCRSPACE_KEY && navigator.onLine) {
+    if ((!found.model || !found.serial) && OCRSPACE_KEY && navigator.onLine && !opt.live) {
       try {
         const f = findModelSerial(await ocrSpace(p.blob));
         found = { model: found.model || f.model, serial: found.serial || f.serial };
@@ -909,9 +1033,10 @@
       };
     });
   }
-  const savePhotos = () => idb("readwrite", s => s.put(photos.map(p => p.blob), KEY)).catch(() => {});
-  idb("readonly", s => s.get(KEY)).then(async blobs => {
-    for (const b of blobs || []) await addBlob(b);
+  const savePhotos = () => idb("readwrite", s => s.put(photos.map(p => ({ blob: p.blob, kind: p.kind })), KEY)).catch(() => {});
+  idb("readonly", s => s.get(KEY)).then(async saved => {
+    // older drafts saved plain blobs: the first one was the label photo
+    for (const [i, it] of (saved || []).entries()) await addBlob(it.blob || it, it.kind || (i === 0 ? "label" : "work"));
     drawPhotos();
   }).catch(() => {});
 
@@ -923,7 +1048,7 @@
     // safety net: WhatsApp on iPhone often drops the text when photos are shared, so it's ready to paste
     if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
     const slug = (q.get("customer") || q.get("job") || "report").replace(/[^\w-]+/g, "-").slice(0, 40);
-    const files = photos.map((p, i) => new File([p.blob], `photo-${i + 1}-${slug}.jpg`, { type: "image/jpeg" }));
+    const files = ordered().map((p, i) => new File([p.blob], `photo-${i + 1}-${slug}.jpg`, { type: "image/jpeg" }));
     const data = files.length ? { files, text } : { text };
     if (navigator.share && (!files.length || (navigator.canShare && navigator.canShare({ files })))) {
       try { await navigator.share(data); }
@@ -939,42 +1064,175 @@
   // ---- clear the whole report (asks first) ----
   $("btnClear").onclick = () => {
     if (!confirm("Clear this report?\n\nModel, serial, parts, labor, notes and photos will be erased. This can't be undone.")) return;
-    ["model", "serial", "labor", "notes"].forEach(k => { $(k).value = ""; $(k).classList.remove("found"); });
+    ["model", "serial", "notes", "labor"].forEach(k => { $(k).value = ""; $(k).classList.remove("found"); });
     ["modelNote", "serialNote"].forEach(k => $(k).textContent = "");
-    $("partsList").innerHTML = ""; setParts(false);
+    $("partsList").innerHTML = "";
     photos.forEach(p => URL.revokeObjectURL(p.url)); photos = []; drawPhotos(); savePhotos();
     try { localStorage.removeItem(KEY); } catch (e) {}
     refresh(); goStep(1);
   };
 
-  // ---- small Clear button on each card: wipes just that card (asks first, only shows when it has data) ----
+  // ---- tap a photo: full screen, or delete it ----
+  let viewing = null;
+  function openViewer(p) { viewing = p; $("viewImg").src = p.url; $("viewer").hidden = false; document.body.style.overflow = "hidden"; }
+  function closeViewer() { viewing = null; $("viewer").hidden = true; $("viewImg").removeAttribute("src"); document.body.style.overflow = ""; }
+  $("viewClose").onclick = closeViewer;
+  $("viewDel").onclick = () => {
+    const p = viewing; if (!p || !confirm("Delete this photo?")) return;
+    closeViewer(); URL.revokeObjectURL(p.url); photos.splice(photos.indexOf(p), 1); drawPhotos(); savePhotos(); updateCardClears();
+  };
+  // ---- Copy buttons for model / serial ----
+  document.querySelectorAll(".copy").forEach(b => b.onclick = async () => {
+    const t = val(b.dataset.copy); if (!t) return;
+    try { await navigator.clipboard.writeText(t); }
+    catch (e) { const i = $(b.dataset.copy); i.select(); document.execCommand("copy"); i.blur(); }
+    b.textContent = "Copied ✓"; b.classList.add("ok");
+    setTimeout(() => { b.textContent = "Copy"; b.classList.remove("ok"); }, 1500);
+  });
+  function updateCopy() { document.querySelectorAll(".copy").forEach(b => b.disabled = !val(b.dataset.copy)); }
+
+  // ---- small Clear button on each card (asks first, shows only when the card has something) ----
+  const dropPhotos = kind => { photos.filter(p => p.kind === kind).forEach(p => URL.revokeObjectURL(p.url)); photos = photos.filter(p => p.kind !== kind); drawPhotos(); savePhotos(); };
   const CARD_CLEAR = {
-    Photos:  { has: () => photos.length, what: "the photos",
-               clear: () => { photos.forEach(p => URL.revokeObjectURL(p.url)); photos = []; drawPhotos(); savePhotos(); } },
-    Unit:    { has: () => val("model") || val("serial"), what: "the model and serial",
-               clear: () => { ["model", "serial"].forEach(k => { $(k).value = ""; $(k).classList.remove("found"); $(k + "Note").textContent = ""; }); } },
-    Parts:   { has: () => partsNeeded, what: "all parts",
-               clear: () => { $("partsList").innerHTML = ""; setParts(false); } },
-    Amounts: { has: () => val("labor"), what: "the labor amount", clear: () => { $("labor").value = ""; } },
-    Notes:   { has: () => val("notes"), what: "the notes", clear: () => { $("notes").value = ""; } }
+    "Model & serial": { what: "the model, serial and label photos", has: () => val("model") || val("serial") || photos.some(p => p.kind === "label"),
+      clear: () => { ["model", "serial"].forEach(k => { $(k).value = ""; $(k).classList.remove("found"); $(k + "Note").textContent = ""; }); dropPhotos("label"); } },
+    "Work photos": { what: "the work photos", has: () => photos.some(p => p.kind === "work"), clear: () => dropPhotos("work") },
+    "Parts": { what: "all parts", has: () => $("partsList").children.length, clear: () => { $("partsList").innerHTML = ""; } },
+    "Labor": { what: "the labor amount", has: () => val("labor"), clear: () => { $("labor").value = ""; } },
+    "Notes": { what: "the notes", has: () => val("notes"), clear: () => { $("notes").value = ""; } }
   };
   var cardClears = [];
-  document.querySelectorAll("main .card h2").forEach(h => {
-    const c = CARD_CLEAR[h.textContent.trim()];
-    if (!c) return;
+  document.querySelectorAll("main .card > h2").forEach(h => {
+    const c = CARD_CLEAR[h.textContent.trim()]; if (!c) return;
     const head = document.createElement("div"); head.className = "chead";
     const b = document.createElement("button"); b.type = "button"; b.className = "cclear"; b.textContent = "Clear";
     b.setAttribute("aria-label", "Clear " + c.what);
-    b.onclick = () => {
-      if (!confirm("Clear " + c.what + "?")) return;
-      c.clear(); refresh(); save(); updateCardClears();
-    };
-    h.replaceWith(head); head.append(h, b);
-    cardClears.push([b, c]);
+    b.onclick = () => { if (!confirm("Clear " + c.what + "?")) return; c.clear(); refresh(); save(); updateCardClears(); };
+    h.replaceWith(head); head.append(h, b); cardClears.push([b, c]);
   });
-  function updateCardClears() { (cardClears || []).forEach(([b, c]) => b.hidden = !c.has()); }
+  function updateCardClears() { (cardClears || []).forEach(([b, c]) => b.hidden = !c.has()); updateCopy(); }
   document.addEventListener("input", updateCardClears);
   document.addEventListener("click", () => setTimeout(updateCardClears));
+
+  // ---- live label scan: camera reads the label; same value seen twice (or from a barcode) = filled in ----
+  // If it can't get both within SCAN_SECONDS, the "Take photo instead" button lights up.
+  const scan = { on: false };
+  function stopScan() {
+    scan.on = false; clearTimeout(scan.timer);
+    if (scan.stream) scan.stream.getTracks().forEach(t => t.stop());
+    scan.stream = null; $("scanVideo").srcObject = null; $("scanner").hidden = true; $("scanTorch").hidden = true;
+    document.body.style.overflow = "";
+  }
+  function scanPhotoInstead() { stopScan(); $("labelCam").click(); }
+  $("scanClose").onclick = () => { fillScanned(); stopScan(); };
+  $("scanPhoto").onclick = () => { fillScanned(); scanPhotoInstead(); };
+
+  // camera picture of what's in the box (higher res = better OCR), or the whole frame for the report photo
+  function grab(whole) {
+    const v = $("scanVideo"), vw = v.videoWidth, vh = v.videoHeight;
+    let sx = 0, sy = 0, sw = vw, sh = vh;
+    if (!whole) {
+      const b = $("scanBox").getBoundingClientRect(), r = v.getBoundingClientRect();
+      const k = Math.max(r.width / vw, r.height / vh), ox = (vw * k - r.width) / 2, oy = (vh * k - r.height) / 2;
+      sx = Math.max(0, (b.left - r.left + ox) / k); sy = Math.max(0, (b.top - r.top + oy) / k);
+      sw = Math.min(vw - sx, b.width / k); sh = Math.min(vh - sy, b.height / k);
+    }
+    const k2 = whole ? 1 : Math.min(1, 1280 / Math.max(sw, sh)); // reading: at most 1280px (faster, still sharp)
+    const c = document.createElement("canvas"); c.width = Math.round(sw * k2); c.height = Math.round(sh * k2);
+    c.getContext("2d").drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c;
+  }
+
+  function showGot() {
+    const g = scan.got, t = [g.model && "Model ✓ " + g.model, g.serial && "Serial ✓ " + g.serial].filter(Boolean).join("   ");
+    $("scanGot").textContent = t;
+    $("scanBox").classList.toggle("hit", !!(g.model || g.serial));
+  }
+  // put whatever was confirmed into the form (never over what the tech typed)
+  function fillScanned() {
+    if (!scan.got || !(scan.got.model || scan.got.serial)) return false;
+    const f = {};
+    for (const k of ["model", "serial"]) if (scan.got[k] && !val(k)) f[k] = scan.got[k];
+    applyFound(f);
+    if (scan.frame) { const fr = scan.frame; scan.frame = null; fr.then(async b => { if (b) { await addBlob(b, "label"); drawPhotos(); savePhotos(); } }); }
+    scan.got = {};
+    return true;
+  }
+
+  async function scanLoop() {
+    const pause = ms => new Promise(r => setTimeout(r, ms));
+    while (scan.on) {
+      await pause(150); // lets the screen and buttons respond between reads
+      const v = $("scanVideo");
+      if (!scan.on) return;
+      if (v.readyState < 2 || !v.videoWidth) continue;
+      if (!scan.ready) {
+        $("scanMsg").textContent = "Loading the label reader… (slow only the first time)";
+        try { await getPaddle(); } catch (e) {}
+        if (!scan.on) return;
+        scan.ready = true; $("scanMsg").textContent = "Hold steady on the label…";
+      }
+      let f = {};
+      try { f = await readLabel({ img: grab(false) }, { rots: [0], live: true }); }
+      catch (e) { $("scanGot").textContent = "Reader problem: " + (e.message || e); await pause(800); }
+      if (!scan.on) return;
+      for (const k of ["model", "serial"]) {
+        if (scan.got[k]) continue;
+        const val1 = f[k] || (f.dropped && f.dropped[k]);
+        if (!val1) continue;
+        const n = (scan.votes[k][val1] || 0) + 1; scan.votes[k][val1] = n;
+        if (n >= 2 || (f.byCode && f.byCode[k] && f[k])) {
+          scan.got[k] = val1;
+          if (!scan.frame) { const c = grab(true); scan.frame = new Promise(r => c.toBlob(r, "image/jpeg", 0.85)); }
+        }
+      }
+      showGot();
+      const need = ["model", "serial"].filter(k => !val(k));
+      if (need.every(k => scan.got[k])) {
+        if (navigator.vibrate) navigator.vibrate(120);
+        $("scanMsg").textContent = "Got it ✓";
+        await new Promise(r => setTimeout(r, 450));
+        fillScanned(); stopScan(); return;
+      }
+    }
+  }
+  function startTimer() {
+    clearTimeout(scan.timer);
+    scan.timer = setTimeout(() => {
+      if (!scan.on) return;
+      $("scanMsg").textContent = scan.got.model || scan.got.serial
+        ? "Couldn't read the rest live. Take a photo of the label:"
+        : "Can't read it live. Take a photo of the label instead:";
+      $("scanPhoto").classList.add("go");
+    }, SCAN_SECONDS * 1000);
+  }
+
+  $("labelCamBtn").onclick = async () => {
+    // no live camera in this browser: straight to the normal camera
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return $("labelCam").click();
+    Object.assign(scan, { on: true, ready: false, got: {}, votes: { model: {}, serial: {} }, frame: null });
+    $("scanMsg").textContent = "Starting camera…"; $("scanGot").textContent = "";
+    $("scanPhoto").classList.remove("go"); $("scanBox").classList.remove("hit");
+    $("scanner").hidden = false; document.body.style.overflow = "hidden";
+    try {
+      scan.stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+      if (!scan.on) return stopScan();
+      $("scanVideo").srcObject = scan.stream; await $("scanVideo").play().catch(() => {});
+      const track = scan.stream.getVideoTracks()[0], caps = track.getCapabilities ? track.getCapabilities() : {};
+      scan.torch = false; $("scanTorch").classList.remove("on"); $("scanTorch").hidden = !caps.torch;
+      $("scanTorch").onclick = async () => {
+        try { await track.applyConstraints({ advanced: [{ torch: !scan.torch }] }); scan.torch = !scan.torch; $("scanTorch").classList.toggle("on", scan.torch); }
+        catch (e) { $("scanTorch").hidden = true; }
+      };
+      $("scanMsg").textContent = "Fit the model/serial label in the box";
+      startTimer(); // the photo fallback lights up after SCAN_SECONDS no matter what
+      scanLoop();
+    } catch (e) {
+      $("scanMsg").textContent = "Camera not available here. Take a photo of the label instead:";
+      $("scanPhoto").classList.add("go");
+    }
+  };
 
   goStep(1); updateCardClears();
 </script>
